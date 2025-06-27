@@ -18,32 +18,31 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📦 Checkout do repositório
+      - name: Checkout (caso necessário)
         uses: actions/checkout@v3
 
-      - name: ⚙️ Instalar FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
-      - name: 🧰 Configurar Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 18
+          cache: 'npm'
 
-      - name: 💾 Cache de dependências (npm)
+      - name: Cache de dependências
         uses: actions/cache@v3
         with:
           path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-
 
-      - name: 📥 Instalar Puppeteer
-        run: npm install puppeteer
+      - name: Instalar dependências
+        run: npm install puppeteer follow-redirects
 
-      - name: 📝 Criar inputs.json
-        run: echo '${{ toJson(github.event.inputs) }}' > inputs.json
+      - name: Criar arquivo inputs.json
+        run: |
+          echo '${{ toJson(github.event.inputs) }}' > inputs.json
 
-      - name: 🎥 Iniciar transmissão ao vivo
+      - name: Executar live
         run: node index.js inputs.json
         env:
           SERVER_STATUS_URL: 'https://livestream.ct.ws/Google%20drive/status.php'
