@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout (caso necessário)
+      - name: Checkout (se necessário)
         uses: actions/checkout@v3
 
       - name: Setup Node.js
@@ -27,6 +27,11 @@ jobs:
           node-version: 18
           cache: 'npm'
 
+      - name: Gerar package-lock.json e instalar dependências
+        run: |
+          npm init -y
+          npm install puppeteer follow-redirects
+
       - name: Cache de dependências
         uses: actions/cache@v3
         with:
@@ -34,9 +39,6 @@ jobs:
           key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-
-
-      - name: Instalar dependências
-        run: npm install puppeteer follow-redirects
 
       - name: Criar arquivo inputs.json
         run: |
