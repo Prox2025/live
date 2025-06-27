@@ -1,32 +1,28 @@
-import fs from 'fs';
-import { exec, spawn } from 'child_process';
-import puppeteer from 'puppeteer';
-import https from 'https';
-import path from 'path';
+const fs = require('fs');
+const { exec, spawn } = require('child_process');
+const puppeteer = require('puppeteer');
+const https = require('https');
+const path = require('path');
 
 const SERVER_STATUS_URL = 'https://livestream.ct.ws/Google%20drive/status.php';
-
-// Função delay simples
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
-// Envia POST JSON via Puppeteer ao servidor de status
+// Envia status ao servidor via Puppeteer
 async function enviarStatusPuppeteer(data) {
   const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   try {
     const page = await browser.newPage();
-
     await page.goto(SERVER_STATUS_URL, { waitUntil: 'networkidle2', timeout: 60000 });
     await delay(3000);
 
-    // Envia o POST com fetch no contexto da página
     const resposta = await page.evaluate(async (payload) => {
       const res = await fetch(window.location.href, {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       const texto = await res.text();
-      return {status: res.status, texto};
+      return { status: res.status, texto };
     }, data);
 
     await browser.close();
@@ -37,6 +33,7 @@ async function enviarStatusPuppeteer(data) {
   }
 }
 
+// Download de vídeo do Drive
 async function baixarVideo(url, dest) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
@@ -55,9 +52,9 @@ async function baixarVideo(url, dest) {
   });
 }
 
+// Rodar ffmpeg para transmissão ao vivo
 async function rodarFFmpeg(inputFile, streamUrl) {
   return new Promise((resolve, reject) => {
-    // ffmpeg args - 720p streaming com codec h264 e áudio AAC para facebook
     const ffmpeg = spawn('ffmpeg', [
       '-re', '-i', inputFile,
       '-vf', 'scale=w=1280:h=720:force_original_aspect_ratio=decrease',
@@ -80,16 +77,15 @@ async function rodarFFmpeg(inputFile, streamUrl) {
 
     let notifiedStart = false;
 
-    // Após 1 minuto avisa o servidor que a live começou
     const timer = setTimeout(async () => {
       if (!notifiedStart) {
-        console.log('Enviando notificação de live iniciada ao servidor...');
+        console.log('🔔 Notificando servidor que live começou...');
         try {
           await enviarStatusPuppeteer({ id: path.basename(inputFile, '.mp4'), status: 'started' });
           notifiedStart = true;
-          console.log('Notificação enviada com sucesso');
+          console.log('✅ Notificação enviada');
         } catch (e) {
-          console.error('Erro notificando live iniciada:', e);
+          console.error('⚠️ Erro notificando início da live:', e);
         }
       }
     }, 60000);
@@ -97,37 +93,37 @@ async function rodarFFmpeg(inputFile, streamUrl) {
     ffmpeg.on('close', async (code) => {
       clearTimeout(timer);
 
+      const id = path.basename(inputFile, '.mp4');
       if (code === 0) {
-        console.log('Live finalizada com sucesso, enviando status ao servidor...');
+        console.log('✅ Live finalizada. Notificando servidor...');
         try {
-          await enviarStatusPuppeteer({ id: path.basename(inputFile, '.mp4'), status: 'finished' });
-          console.log('Status final enviado com sucesso');
+          await enviarStatusPuppeteer({ id, status: 'finished' });
         } catch (e) {
-          console.error('Erro notificando live finalizada:', e);
+          console.error('⚠️ Erro notificando término:', e);
         }
         resolve();
       } else {
-        console.error(`ffmpeg saiu com código ${code}`);
+        console.error(`❌ ffmpeg finalizou com código ${code}`);
         try {
-          await enviarStatusPuppeteer({ id: path.basename(inputFile, '.mp4'), status: 'error', message: `ffmpeg saiu com código ${code}` });
+          await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg finalizou com código ${code}` });
         } catch (_) {}
-        reject(new Error(`ffmpeg saiu com código ${code}`));
+        reject(new Error(`ffmpeg finalizou com código ${code}`));
       }
 
-      // Remove arquivo local após terminar
       try {
         fs.unlinkSync(inputFile);
-        console.log('Arquivo de vídeo local removido');
+        console.log('🧹 Arquivo de vídeo removido');
       } catch (e) {
-        console.warn('Erro removendo arquivo de vídeo:', e);
+        console.warn('⚠️ Erro ao remover vídeo:', e);
       }
     });
 
     ffmpeg.on('error', async (err) => {
       clearTimeout(timer);
-      console.error('Erro ffmpeg:', err);
+      const id = path.basename(inputFile, '.mp4');
+      console.error('❌ Erro no ffmpeg:', err);
       try {
-        await enviarStatusPuppeteer({ id: path.basename(inputFile, '.mp4'), status: 'error', message: err.message });
+        await enviarStatusPuppeteer({ id, status: 'error', message: err.message });
       } catch (_) {}
       reject(err);
     });
@@ -138,30 +134,27 @@ async function main() {
   try {
     const jsonPath = process.argv[2];
     if (!jsonPath || !fs.existsSync(jsonPath)) {
-      console.error('JSON de entrada não encontrado:', jsonPath);
+      console.error('❌ JSON de entrada não encontrado:', jsonPath);
       process.exit(1);
     }
 
-    const jsonRaw = fs.readFileSync(jsonPath, 'utf-8');
-    const { id, video_url, stream_url } = JSON.parse(jsonRaw);
+    const { id, video_url, stream_url } = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
 
     if (!id || !video_url || !stream_url) {
       throw new Error('JSON deve conter id, video_url e stream_url');
     }
 
-    console.log(`Iniciando live para vídeo ID: ${id}`);
+    console.log(`🚀 Iniciando live para vídeo ID: ${id}`);
 
-    // Baixar vídeo
     const videoFile = path.join(process.cwd(), `${id}.mp4`);
-    console.log(`Baixando vídeo de ${video_url} para ${videoFile}...`);
+    console.log(`⬇️ Baixando vídeo de ${video_url} para ${videoFile}...`);
     await baixarVideo(video_url, videoFile);
-    console.log('Download concluído.');
+    console.log('✅ Download concluído.');
 
-    // Rodar ffmpeg para streaming
     await rodarFFmpeg(videoFile, stream_url);
 
   } catch (err) {
-    console.error('Erro fatal:', err);
+    console.error('💥 Erro fatal:', err);
     process.exit(1);
   }
 }
