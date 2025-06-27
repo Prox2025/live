@@ -41,7 +41,7 @@ jobs:
         run: |
           if [ ! -f package.json ]; then
             echo "package.json não encontrado, criando..."
-            cat <<EOF > package.json
+            cat > package.json << 'EOF'
 {
   "name": "live-stream-runner",
   "version": "1.0.0",
@@ -77,4 +77,4 @@ EOF
       - name: Iniciar Live
         run: npm start
         env:
-          SERVER_STATUS_URL: 'https://livestream.ct.ws/Google%20drive/status.php'
+          SERVER_STATUS_URL: https://livestream.ct.ws/Google%20drive/status.php
