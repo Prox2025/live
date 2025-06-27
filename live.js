@@ -43,8 +43,14 @@ async function baixarVideo(driveUrl, dest) {
     const fileId = fileIdMatch[1];
     const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
 
+    let cookies = '';
+
     https.get(downloadUrl, res => {
       let data = '';
+
+      if (res.headers['set-cookie']) {
+        cookies = res.headers['set-cookie'].map(c => c.split(';')[0]).join('; ');
+      }
 
       if (res.headers['content-disposition']) {
         const file = fs.createWriteStream(dest);
@@ -54,15 +60,18 @@ async function baixarVideo(driveUrl, dest) {
         res.on('data', chunk => data += chunk);
         res.on('end', () => {
           const root = parse(data);
-          const links = root.querySelectorAll('a');
-          const confirmLink = links.find(link =>
-            link.getAttribute('href')?.includes('confirm='));
+          const confirmLink = root.querySelector('a#uc-download-link');
 
           if (!confirmLink) return reject(new Error('Link de confirmação não encontrado.'));
 
           const confirmUrl = `https://drive.google.com${confirmLink.getAttribute('href')}`;
 
-          https.get(confirmUrl, res2 => {
+          https.get(confirmUrl, {
+            headers: {
+              'Cookie': cookies,
+              'User-Agent': 'Mozilla/5.0'
+            }
+          }, res2 => {
             const file = fs.createWriteStream(dest);
             res2.pipe(file);
             file.on('finish', () => file.close(resolve));
@@ -113,8 +122,8 @@ async function rodarFFmpeg(inputFile, streamUrl) {
 
     ffmpeg.on('close', async (code) => {
       clearTimeout(timer);
-
       const id = path.basename(inputFile, '.mp4');
+
       if (code === 0) {
         console.log('✅ Live finalizada. Notificando servidor...');
         try {
