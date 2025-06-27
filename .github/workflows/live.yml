@@ -1,0 +1,39 @@
+name: Iniciar Live
+
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        description: 'ID do vídeo'
+        required: true
+      video_url:
+        description: 'URL do vídeo para download'
+        required: true
+      stream_url:
+        description: 'URL do stream Facebook'
+        required: true
+
+jobs:
+  run-live:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (opcional se precisar de arquivos)
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm install puppeteer
+
+      - name: Create inputs.json
+        run: |
+          echo '${{ toJson(github.event.inputs) }}' > inputs.json
+
+      - name: Run live streaming script
+        run: node index.js inputs.json
+        env:
+          SERVER_STATUS_URL: 'https://livestream.ct.ws/Google%20drive/status.php'
