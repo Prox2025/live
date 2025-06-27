@@ -1,7 +1,7 @@
 const fs = require('fs');
-const { exec, spawn } = require('child_process');
+const { spawn } = require('child_process');
 const puppeteer = require('puppeteer');
-const { https } = require('follow-redirects'); // ⚠️ IMPORTANTE: usar follow-redirects
+const { https } = require('follow-redirects'); // importante para seguir redirecionamentos
 const path = require('path');
 
 const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL || 'https://livestream.ct.ws/Google%20drive/status.php';
@@ -33,18 +33,34 @@ async function enviarStatusPuppeteer(data) {
   }
 }
 
-// Download de vídeo do Google Drive
+// Download de vídeo do Google Drive com suporte a redirecionamento
 async function baixarVideo(url, dest) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
-    https.get(url, response => {
-      if (response.statusCode !== 200) {
-        reject(new Error(`Download falhou: status ${response.statusCode}`));
-        return;
+
+    https.get(url, res => {
+      // Se for redirecionamento, seguir a nova URL
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        file.close();
+        fs.unlink(dest, () => {}); // remover arquivo parcial
+        return baixarVideo(res.headers.location, dest).then(resolve).catch(reject);
       }
-      response.pipe(file);
+
+      if (res.statusCode !== 200) {
+        file.close();
+        fs.unlink(dest, () => {});
+        return reject(new Error(`Download falhou: status ${res.statusCode}`));
+      }
+
+      res.pipe(file);
+
       file.on('finish', () => {
         file.close(resolve);
+      });
+
+      file.on('error', err => {
+        file.close();
+        fs.unlink(dest, () => reject(err));
       });
     }).on('error', err => {
       fs.unlink(dest, () => reject(err));
