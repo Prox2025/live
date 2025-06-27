@@ -2,13 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const puppeteer = require('puppeteer');
+const https = require('https');
 
 const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL || 'https://livestream.ct.ws/Google%20drive/status.php';
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
 // Envia status ao servidor via Puppeteer
 async function enviarStatusPuppeteer(data) {
-  const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox'] });
+  const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
   try {
     const page = await browser.newPage();
     await page.goto(SERVER_STATUS_URL, { waitUntil: 'networkidle2', timeout: 60000 });
@@ -33,44 +34,63 @@ async function enviarStatusPuppeteer(data) {
 }
 
 // Usa Puppeteer para obter o link real de download do Google Drive
-async function obterLinkDownload(driveUrl) {
-  console.log('ðŸŒ Obtendo link real de download via Puppeteer...');
-  const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox'] });
-  const page = await browser.newPage();
-  await page.goto(driveUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-  let directLink = driveUrl;
+async function obterLinkDownloadReal(driveUrl) {
+  const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
   try {
-    await page.waitForSelector('#uc-download-link', { timeout: 7000 });
-    const href = await page.$eval('#uc-download-link', el => el.href);
-    console.log('ðŸ–±ï¸ BotÃ£o "Baixar de qualquer forma" clicado...');
-    directLink = href;
-  } catch {
-    console.log('âš ï¸ BotÃ£o nÃ£o encontrado ou nÃ£o necessÃ¡rio.');
-  }
+    const page = await browser.newPage();
+    await page.goto(driveUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+    await delay(3000);
 
-  await browser.close();
-  console.log('ðŸ”— Link direto obtido:', directLink);
-  return directLink;
+    // Tenta clicar no botão "Baixar de qualquer forma" se existir
+    try {
+      await page.waitForSelector('#uc-download-link', { timeout: 5000 });
+      await page.click('#uc-download-link');
+      console.log('🖱️ Botão "Baixar de qualquer forma" clicado...');
+      await delay(3000); // espera o redirecionamento carregar
+    } catch {
+      console.log('⚠️ Botão "Baixar de qualquer forma" não encontrado ou não necessário.');
+    }
+
+    // Agora pega o link direto do botão real de download
+    // No Google Drive, o botão fica com id "uc-download-link" ou o link de download direto pode estar na URL
+    const link = await page.evaluate(() => {
+      const el = document.querySelector('#uc-download-link');
+      if (el) return el.href;
+      // Caso não tenha, tenta obter do meta refresh ou do url atual (redirecionado)
+      return window.location.href;
+    });
+
+    await browser.close();
+
+    if (!link) throw new Error('Não foi possível obter o link direto de download.');
+    return link;
+
+  } catch (err) {
+    await browser.close();
+    throw err;
+  }
 }
 
-// Baixa o vÃ­deo via https e salva como arquivo local
-async function baixarVideo(downloadUrl, dest) {
-  const { https } = require('follow-redirects');
+// Baixa o vídeo usando https nativo do Node.js
+function baixarVideo(url, dest) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
-    https.get(downloadUrl, response => {
-      response.pipe(file);
-      file.on('finish', () => {
-        file.close(resolve);
-      });
-    }).on('error', err => {
+    console.log('⬇️ Baixando vídeo de', url);
+
+    https.get(url, (res) => {
+      if (res.statusCode !== 200) {
+        reject(new Error(`Falha no download. Código HTTP: ${res.statusCode}`));
+        return;
+      }
+      res.pipe(file);
+      file.on('finish', () => file.close(resolve));
+    }).on('error', (err) => {
       fs.unlink(dest, () => reject(err));
     });
   });
 }
 
-// Rodar ffmpeg para transmitir o vÃ­deo
+// Roda o ffmpeg para transmitir o vídeo
 async function rodarFFmpeg(inputFile, streamUrl) {
   return new Promise((resolve, reject) => {
     const ffmpeg = spawn('ffmpeg', [
@@ -97,48 +117,49 @@ async function rodarFFmpeg(inputFile, streamUrl) {
 
     const timer = setTimeout(async () => {
       if (!notifiedStart) {
-        console.log('ðŸ”” Notificando servidor que live comeÃ§ou...');
+        console.log('🔔 Notificando servidor que live começou...');
         try {
           await enviarStatusPuppeteer({ id: path.basename(inputFile, '.mp4'), status: 'started' });
           notifiedStart = true;
-          console.log('âœ… NotificaÃ§Ã£o enviada');
+          console.log('✅ Notificação enviada');
         } catch (e) {
-          console.error('âš ï¸ Erro notificando inÃ­cio da live:', e);
+          console.error('⚠️ Erro notificando início da live:', e);
         }
       }
     }, 60000);
 
     ffmpeg.on('close', async (code) => {
       clearTimeout(timer);
+
       const id = path.basename(inputFile, '.mp4');
       if (code === 0) {
-        console.log('âœ… Live finalizada. Notificando servidor...');
+        console.log('✅ Live finalizada. Notificando servidor...');
         try {
           await enviarStatusPuppeteer({ id, status: 'finished' });
         } catch (e) {
-          console.error('âš ï¸ Erro notificando tÃ©rmino:', e);
+          console.error('⚠️ Erro notificando término:', e);
         }
         resolve();
       } else {
-        console.error(`âŒ ffmpeg saiu com cÃ³digo ${code}`);
+        console.error(`❌ ffmpeg finalizou com código ${code}`);
         try {
-          await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg saiu com cÃ³digo ${code}` });
+          await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg finalizou com código ${code}` });
         } catch (_) {}
-        reject(new Error(`ffmpeg saiu com cÃ³digo ${code}`));
+        reject(new Error(`ffmpeg finalizou com código ${code}`));
       }
 
       try {
         fs.unlinkSync(inputFile);
-        console.log('ðŸ§¹ Arquivo temporÃ¡rio removido.');
+        console.log('🧹 Arquivo de vídeo removido');
       } catch (e) {
-        console.warn('âš ï¸ Erro ao remover arquivo:', e);
+        console.warn('⚠️ Erro ao remover vídeo:', e);
       }
     });
 
     ffmpeg.on('error', async (err) => {
       clearTimeout(timer);
       const id = path.basename(inputFile, '.mp4');
-      console.error('âŒ Erro no ffmpeg:', err);
+      console.error('❌ Erro no ffmpeg:', err);
       try {
         await enviarStatusPuppeteer({ id, status: 'error', message: err.message });
       } catch (_) {}
@@ -147,12 +168,12 @@ async function rodarFFmpeg(inputFile, streamUrl) {
   });
 }
 
-// ExecuÃ§Ã£o principal
+// Execução principal
 async function main() {
   try {
     const jsonPath = process.argv[2];
     if (!jsonPath || !fs.existsSync(jsonPath)) {
-      console.error('âŒ JSON de entrada nÃ£o encontrado:', jsonPath);
+      console.error('❌ JSON de entrada não encontrado:', jsonPath);
       process.exit(1);
     }
 
@@ -162,20 +183,22 @@ async function main() {
       throw new Error('JSON deve conter id, video_url e stream_url');
     }
 
-    console.log(`ðŸš€ Iniciando live para vÃ­deo ID: ${id}`);
+    console.log(`🚀 Iniciando live para vídeo ID: ${id}`);
 
-    console.log(`ðŸŒ Obtendo link de download...`);
-    const directLink = await obterLinkDownload(video_url);
+    // Obtém o link real via Puppeteer
+    console.log('🌐 Obtendo link real de download via Puppeteer...');
+    const linkReal = await obterLinkDownloadReal(video_url);
+    console.log('🔗 Link direto obtido:', linkReal);
 
     const videoFile = path.join(process.cwd(), `${id}.mp4`);
-    console.log(`â¬‡ï¸ Baixando vÃ­deo...`);
-    await baixarVideo(directLink, videoFile);
-    console.log('âœ… Download concluÃ­do.');
+
+    await baixarVideo(linkReal, videoFile);
+    console.log('✅ Download concluído.');
 
     await rodarFFmpeg(videoFile, stream_url);
 
   } catch (err) {
-    console.error('ðŸ’¥ Erro fatal:', err);
+    console.error('💥 Erro fatal:', err);
     process.exit(1);
   }
 }
