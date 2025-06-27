@@ -1,0 +1,16 @@
+{
+  "name": "live-stream-runner",
+  "version": "1.0.0",
+  "description": "Executa transmissões ao vivo com vídeos do Google Drive",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js inputs.json"
+  },
+  "dependencies": {
+    "follow-redirects": "^1.15.6",
+    "puppeteer": "^21.3.8"
+  },
+  "author": "Pedro",
+  "license": "MIT"
+}
