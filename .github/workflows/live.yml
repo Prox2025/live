@@ -18,12 +18,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Criar diretório do projeto
-        run: mkdir -p live && cd live
+      - name: Checkout dos arquivos
+        uses: actions/checkout@v3
 
       - name: Criar package.json
         run: |
-          cd live
           cat <<EOF > package.json
           {
             "name": "live-stream-runner",
@@ -35,8 +34,8 @@ jobs:
               "start": "node index.js inputs.json"
             },
             "dependencies": {
-              "follow-redirects": "^1.15.6",
-              "puppeteer": "^21.3.8"
+              "puppeteer": "^21.3.8",
+              "follow-redirects": "^1.15.6"
             }
           }
           EOF
@@ -45,22 +44,16 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.npm
-          key: ${{ runner.os }}-npm-${{ hashFiles('live/package-lock.json') }}
+          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-npm-
 
       - name: Instalar dependências
-        working-directory: live
         run: npm install
 
-      - name: Checkout dos arquivos (incluindo index.js)
-        uses: actions/checkout@v3
-
       - name: Criar arquivo de entrada inputs.json
-        working-directory: live
         run: |
           echo '${{ toJson(github.event.inputs) }}' > inputs.json
 
-      - name: Rodar script de transmissão
-        working-directory: live
+      - name: Executar transmissão ao vivo
         run: npm start
