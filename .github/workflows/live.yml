@@ -18,33 +18,49 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout (se necessário)
-        uses: actions/checkout@v3
+      - name: Criar diretório do projeto
+        run: mkdir -p live && cd live
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18
-          cache: 'npm'
-
-      - name: Gerar package-lock.json e instalar dependências
+      - name: Criar package.json
         run: |
-          npm init -y
-          npm install puppeteer follow-redirects
+          cd live
+          cat <<EOF > package.json
+          {
+            "name": "live-stream-runner",
+            "version": "1.0.0",
+            "description": "Executa transmissões ao vivo com vídeos do Google Drive",
+            "main": "index.js",
+            "type": "commonjs",
+            "scripts": {
+              "start": "node index.js inputs.json"
+            },
+            "dependencies": {
+              "follow-redirects": "^1.15.6",
+              "puppeteer": "^21.3.8"
+            }
+          }
+          EOF
 
-      - name: Cache de dependências
+      - name: Usar cache do NPM
         uses: actions/cache@v3
         with:
           path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-npm-${{ hashFiles('live/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-
+            ${{ runner.os }}-npm-
 
-      - name: Criar arquivo inputs.json
+      - name: Instalar dependências
+        working-directory: live
+        run: npm install
+
+      - name: Checkout dos arquivos (incluindo index.js)
+        uses: actions/checkout@v3
+
+      - name: Criar arquivo de entrada inputs.json
+        working-directory: live
         run: |
           echo '${{ toJson(github.event.inputs) }}' > inputs.json
 
-      - name: Executar live
-        run: node index.js inputs.json
-        env:
-          SERVER_STATUS_URL: 'https://livestream.ct.ws/Google%20drive/status.php'
+      - name: Rodar script de transmissão
+        working-directory: live
+        run: npm start
