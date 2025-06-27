@@ -1,4 +1,4 @@
-name: Live Automation
+name: Iniciar Live Automática
 
 on:
   workflow_dispatch:
@@ -6,67 +6,33 @@ on:
       id:
         description: 'ID do vídeo'
         required: true
-        type: string
       video_url:
-        description: 'URL do vídeo para download'
+        description: 'URL do vídeo Google Drive'
         required: true
-        type: string
       stream_url:
-        description: 'URL do stream Facebook'
+        description: 'URL do Facebook Live (stream_url)'
         required: true
-        type: string
 
 jobs:
-  run-live:
+  live:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: 🛒 Clonar repositório
+        uses: actions/checkout@v4
 
-      - name: Set up Node.js 18
-        uses: actions/setup-node@v3
+      - name: ⚙️ Instalar Node.js e dependências
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: '20'
 
-      - name: Cache npm modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.npm
-            node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
-
-      - name: Install ffmpeg
+      - name: 🧩 Instalar Puppeteer e pacotes do sistema
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y libgbm-dev ffmpeg wget
+          npm install puppeteer
 
-      - name: Create package.json if missing (only Puppeteer)
-        run: |
-          if [ ! -f package.json ]; then
-            echo '{
-              "name": "live-automation",
-              "version": "1.0.0",
-              "main": "live.js",
-              "dependencies": {
-                "puppeteer": "^20.7.4"
-              }
-            }' > package.json
-          fi
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Create input JSON file
-        run: |
-          echo '{
-            "id": "${{ github.event.inputs.id }}",
-            "video_url": "${{ github.event.inputs.video_url }}",
-            "stream_url": "${{ github.event.inputs.stream_url }}"
-          }' > input.json
-
-      - name: Run live.js script from repo root
-        run: node live.js input.json
+      - name: 🚀 Baixar vídeo e iniciar live
+        run: node live.js "${{ github.event.inputs.video_url }}"
+        env:
+          STREAM_URL: ${{ github.event.inputs.stream_url }}
