@@ -24,6 +24,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      - name: List files in repo root (debug)
+        run: ls -la
+
       - name: Set up Node.js 18
         uses: actions/setup-node@v3
         with:
@@ -71,5 +74,5 @@ jobs:
             "stream_url": "${{ github.event.inputs.stream_url }}"
           }' > input.json
 
-      - name: Run live.js script
+      - name: Run live.js script from repo root
         run: node live.js input.json
