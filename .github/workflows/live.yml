@@ -1,4 +1,4 @@
-name: Iniciar Live com Cache e Criação Automática do package.json
+name: Live Automation
 
 on:
   workflow_dispatch:
@@ -6,75 +6,70 @@ on:
       id:
         description: 'ID do vídeo'
         required: true
+        type: string
       video_url:
         description: 'URL do vídeo para download'
         required: true
+        type: string
       stream_url:
         description: 'URL do stream Facebook'
         required: true
+        type: string
 
 jobs:
   run-live:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout (se precisar de arquivos)
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Cache NPM
-        uses: actions/cache@v3
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
-
-      - name: Setup Node.js
+      - name: Set up Node.js 18
         uses: actions/setup-node@v3
         with:
           node-version: 18
 
-      - name: Instalar ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Cache npm modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.npm
+            node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
 
-      - name: Criar package.json e package-lock.json se não existirem
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Create package.json if missing
         run: |
           if [ ! -f package.json ]; then
-            echo "package.json não encontrado, criando..."
-            cat > package.json << 'EOF'
-{
-  "name": "live-stream-runner",
-  "version": "1.0.0",
-  "description": "Script para rodar live streaming com ffmpeg e puppeteer",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js inputs.json"
-  },
-  "dependencies": {
-    "puppeteer": "^20.7.4",
-    "follow-redirects": "^1.15.2",
-    "node-html-parser": "^6.1.11"
-  }
-}
-EOF
-          else
-            echo "package.json já existe"
+            echo '{
+              "name": "live-automation",
+              "version": "1.0.0",
+              "description": "Script para live automatizada",
+              "main": "live.js",
+              "dependencies": {
+                "puppeteer": "^20.7.4",
+                "follow-redirects": "^1.15.2",
+                "node-html-parser": "^6.1.4"
+              }
+            }' > package.json
           fi
 
-          if [ ! -f package-lock.json ]; then
-            echo "package-lock.json não encontrado, criando via npm install --package-lock-only"
-            npm install --package-lock-only
-          else
-            echo "package-lock.json já existe"
-          fi
-
-      - name: Instalar dependências do Node.js
+      - name: Install dependencies
         run: npm install
 
-      - name: Criar inputs.json com os dados recebidos
-        run: echo '${{ toJson(github.event.inputs) }}' > inputs.json
+      - name: Create input JSON file
+        run: |
+          echo '{
+            "id": "${{ github.event.inputs.id }}",
+            "video_url": "${{ github.event.inputs.video_url }}",
+            "stream_url": "${{ github.event.inputs.stream_url }}"
+          }' > input.json
 
-      - name: Iniciar Live
-        run: npm start
-        env:
-          SERVER_STATUS_URL: https://livestream.ct.ws/Google%20drive/status.php
+      - name: Run live.js script
+        run: node live.js input.json
