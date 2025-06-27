@@ -33,22 +33,33 @@ async function enviarStatusPuppeteer(data) {
   }
 }
 
-// Download de vídeo do Drive
+// Download de vídeo do Drive (segue redirecionamentos 3xx)
 async function baixarVideo(url, dest) {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
-    https.get(url, response => {
-      if (response.statusCode !== 200) {
-        reject(new Error(`Download falhou: status ${response.statusCode}`));
-        return;
-      }
-      response.pipe(file);
-      file.on('finish', () => {
-        file.close(resolve);
+    function requestUrl(u) {
+      const req = https.get(u, (response) => {
+        // Se for redirecionamento, segue o novo location
+        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+          requestUrl(response.headers.location);
+          return;
+        }
+        if (response.statusCode !== 200) {
+          reject(new Error(`Download falhou: status ${response.statusCode}`));
+          return;
+        }
+        const file = fs.createWriteStream(dest);
+        response.pipe(file);
+        file.on('finish', () => {
+          file.close(resolve);
+        });
       });
-    }).on('error', err => {
-      fs.unlink(dest, () => reject(err));
-    });
+
+      req.on('error', (err) => {
+        reject(err);
+      });
+    }
+
+    requestUrl(url);
   });
 }
 
