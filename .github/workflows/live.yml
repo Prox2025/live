@@ -48,12 +48,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-npm-
 
-      - name: Instalar dependências
+      - name: Instalar dependências NPM
         run: npm install
 
-      - name: Criar arquivo de entrada inputs.json
-        run: |
-          echo '${{ toJson(github.event.inputs) }}' > inputs.json
+      - name: Instalar ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: Executar transmissão ao vivo
+      - name: Criar arquivo inputs.json
+        run: echo '${{ toJson(github.event.inputs) }}' > inputs.json
+
+      - name: Executar script live
         run: npm start
