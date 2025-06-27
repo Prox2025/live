@@ -1,8 +1,9 @@
 const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
 const puppeteer = require('puppeteer');
-const { https } = require('follow-redirects'); // importante para seguir redirecionamentos
-const path = require('path');
+const { https } = require('follow-redirects');
+const { parse } = require('node-html-parser');
 
 const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL || 'https://livestream.ct.ws/Google%20drive/status.php';
 const delay = ms => new Promise(res => setTimeout(res, ms));
@@ -33,42 +34,46 @@ async function enviarStatusPuppeteer(data) {
   }
 }
 
-// Download de vídeo do Google Drive com suporte a redirecionamento
-async function baixarVideo(url, dest) {
+// Baixar vídeo do Google Drive (inclusive arquivos grandes com página de confirmação)
+async function baixarVideo(driveUrl, dest) {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
+    const fileIdMatch = driveUrl.match(/id=([^&]+)/);
+    if (!fileIdMatch) return reject(new Error('ID do arquivo do Google Drive não encontrado na URL'));
 
-    https.get(url, res => {
-      // Se for redirecionamento, seguir a nova URL
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        file.close();
-        fs.unlink(dest, () => {}); // remover arquivo parcial
-        return baixarVideo(res.headers.location, dest).then(resolve).catch(reject);
+    const fileId = fileIdMatch[1];
+    const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+
+    https.get(downloadUrl, res => {
+      let data = '';
+
+      if (res.headers['content-disposition']) {
+        // Se for download direto
+        const file = fs.createWriteStream(dest);
+        res.pipe(file);
+        file.on('finish', () => file.close(resolve));
+      } else {
+        // Caso tenha o aviso de vírus
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          const root = parse(data);
+          const confirmLink = root.querySelector('a#uc-download-link');
+          if (!confirmLink) return reject(new Error('Link de confirmação não encontrado.'));
+
+          const confirmHref = confirmLink.getAttribute('href');
+          const confirmUrl = `https://drive.google.com${confirmHref}`;
+
+          https.get(confirmUrl, res2 => {
+            const file = fs.createWriteStream(dest);
+            res2.pipe(file);
+            file.on('finish', () => file.close(resolve));
+          }).on('error', err => reject(err));
+        });
       }
-
-      if (res.statusCode !== 200) {
-        file.close();
-        fs.unlink(dest, () => {});
-        return reject(new Error(`Download falhou: status ${res.statusCode}`));
-      }
-
-      res.pipe(file);
-
-      file.on('finish', () => {
-        file.close(resolve);
-      });
-
-      file.on('error', err => {
-        file.close();
-        fs.unlink(dest, () => reject(err));
-      });
-    }).on('error', err => {
-      fs.unlink(dest, () => reject(err));
-    });
+    }).on('error', err => reject(err));
   });
 }
 
-// Rodar ffmpeg para transmissão ao vivo
+// Rodar ffmpeg para transmitir o vídeo
 async function rodarFFmpeg(inputFile, streamUrl) {
   return new Promise((resolve, reject) => {
     const ffmpeg = spawn('ffmpeg', [
