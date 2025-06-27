@@ -34,7 +34,7 @@ async function enviarStatusPuppeteer(data) {
   }
 }
 
-// Baixar vídeo do Google Drive (inclusive arquivos grandes com página de confirmação)
+// Baixar vídeo do Google Drive com suporte a confirmação de vírus
 async function baixarVideo(driveUrl, dest) {
   return new Promise((resolve, reject) => {
     const fileIdMatch = driveUrl.match(/id=([^&]+)/);
@@ -47,20 +47,20 @@ async function baixarVideo(driveUrl, dest) {
       let data = '';
 
       if (res.headers['content-disposition']) {
-        // Se for download direto
         const file = fs.createWriteStream(dest);
         res.pipe(file);
         file.on('finish', () => file.close(resolve));
       } else {
-        // Caso tenha o aviso de vírus
         res.on('data', chunk => data += chunk);
         res.on('end', () => {
           const root = parse(data);
-          const confirmLink = root.querySelector('a#uc-download-link');
+          const links = root.querySelectorAll('a');
+          const confirmLink = links.find(link =>
+            link.getAttribute('href')?.includes('confirm='));
+
           if (!confirmLink) return reject(new Error('Link de confirmação não encontrado.'));
 
-          const confirmHref = confirmLink.getAttribute('href');
-          const confirmUrl = `https://drive.google.com${confirmHref}`;
+          const confirmUrl = `https://drive.google.com${confirmLink.getAttribute('href')}`;
 
           https.get(confirmUrl, res2 => {
             const file = fs.createWriteStream(dest);
@@ -151,6 +151,7 @@ async function rodarFFmpeg(inputFile, streamUrl) {
   });
 }
 
+// Execução principal
 async function main() {
   try {
     const jsonPath = process.argv[2];
