@@ -4,10 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       id:
-        description: 'ID do vídeo (nome do arquivo no Google Drive)'
+        description: 'ID do vídeo'
         required: true
       stream_url:
-        description: 'URL do stream (RTMP do Facebook ou outro)'
+        description: 'URL do stream (RTMP, ex: Facebook Live)'
+        required: true
+      chave_json:
+        description: 'Conteúdo do arquivo chave.json para autenticação Google Drive'
         required: true
 
 jobs:
@@ -45,7 +48,11 @@ jobs:
       - name: 🛠️ Instalar ffmpeg
         run: sudo apt update && sudo apt install -y ffmpeg
 
-      - name: 🧾 Criar arquivo input.json
+      - name: 🧾 Salvar chave.json
+        run: |
+          echo '${{ github.event.inputs.chave_json }}' > chave.json
+
+      - name: 🧾 Criar input.json
         run: |
           echo '{
             "id": "${{ github.event.inputs.id }}",
