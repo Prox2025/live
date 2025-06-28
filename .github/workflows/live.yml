@@ -15,6 +15,18 @@ on:
       chave_json:
         description: 'Conteúdo do arquivo chave.json para autenticação Google Drive'
         required: true
+      logo_id:
+        description: 'ID da imagem logo.png no Google Drive'
+        required: false
+      video_extra_1:
+        description: 'ID do vídeo extra 1'
+        required: false
+      video_extra_2:
+        description: 'ID do vídeo extra 2'
+        required: false
+      video_extra_3:
+        description: 'ID do vídeo extra 3'
+        required: false
 
 jobs:
   run-live:
@@ -55,7 +67,11 @@ jobs:
             "id": "${{ github.event.inputs.id }}",
             "video_drive_id": "${{ github.event.inputs.video_drive_id }}",
             "stream_url": "${{ github.event.inputs.stream_url }}",
-            "chave_json": ${{ toJson(github.event.inputs.chave_json) }}
+            "chave_json": ${{ toJson(github.event.inputs.chave_json) }},
+            "logo_id": "${{ github.event.inputs.logo_id }}",
+            "video_extra_1": "${{ github.event.inputs.video_extra_1 }}",
+            "video_extra_2": "${{ github.event.inputs.video_extra_2 }}",
+            "video_extra_3": "${{ github.event.inputs.video_extra_3 }}"
           }' > input.json
 
       - name: 🧾 Mostrar conteúdo do input.json
