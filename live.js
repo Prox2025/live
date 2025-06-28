@@ -5,9 +5,9 @@ const { google } = require('googleapis');
 const puppeteer = require('puppeteer');
 
 const SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
-const SERVER_STATUS_URL = 'https://livestream.ct.ws/Google drive/live/status.php'; // ajuste conforme seu servidor
+const SERVER_STATUS_URL = 'https://livestream.ct.ws/Google%20drive/live/status.php'; // corrigido (%20)
 
-// Autenticação Google API
+// Autentica com Google API
 async function autenticar(keyFilePath) {
   const auth = new google.auth.GoogleAuth({
     keyFile: keyFilePath,
@@ -16,7 +16,7 @@ async function autenticar(keyFilePath) {
   return await auth.getClient();
 }
 
-// Baixa arquivo do Drive via API usando ID real
+// Faz o download do vídeo
 async function baixarVideo(fileId, dest, keyFilePath) {
   const auth = await autenticar(keyFilePath);
   const drive = google.drive({ version: 'v3', auth });
@@ -47,33 +47,53 @@ async function baixarVideo(fileId, dest, keyFilePath) {
   });
 }
 
-// Notifica servidor via Puppeteer
+// Envia status para o servidor via Puppeteer
 async function enviarStatusPuppeteer(data) {
-  const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
+
   try {
     const page = await browser.newPage();
-    await page.goto(SERVER_STATUS_URL, { waitUntil: 'networkidle2', timeout: 60000 });
-    await new Promise(r => setTimeout(r, 3000)); // delay para garantir carregamento
+
+    // Emula o fuso horário de Moçambique
+    await page.emulateTimezone('Africa/Maputo');
+
+    console.log(`🌐 Acessando ${SERVER_STATUS_URL}`);
+    await page.goto(SERVER_STATUS_URL, {
+      waitUntil: 'networkidle2',
+      timeout: 60000
+    });
+
+    // Aguarda o JS do servidor ser carregado
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
     const resposta = await page.evaluate(async (payload) => {
-      const res = await fetch(window.location.href, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const texto = await res.text();
-      return { status: res.status, texto };
+      try {
+        const res = await fetch(window.location.href, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const texto = await res.text();
+        return { status: res.status, texto };
+      } catch (e) {
+        return { status: 500, texto: 'Erro interno no fetch: ' + e.message };
+      }
     }, data);
 
+    console.log("📡 Resposta do servidor:", resposta);
     await browser.close();
     return resposta;
   } catch (err) {
+    console.error("❌ Erro ao enviar status:", err.message);
     await browser.close();
     throw err;
   }
 }
 
-// Roda ffmpeg para transmissão ao vivo
+// Transmite vídeo com ffmpeg
 async function rodarFFmpeg(inputFile, streamUrl) {
   return new Promise((resolve, reject) => {
     const ffmpeg = spawn('ffmpeg', [
@@ -98,44 +118,46 @@ async function rodarFFmpeg(inputFile, streamUrl) {
 
     let notifiedStart = false;
 
+    // Notifica que começou após 60 segundos
     const timer = setTimeout(async () => {
       if (!notifiedStart) {
-        console.log('🔔 Notificando servidor que live começou...');
+        const id = path.basename(inputFile, '.mp4');
+        console.log('🔔 Notificando início da live...');
         try {
-          await enviarStatusPuppeteer({ id: path.basename(inputFile, '.mp4'), status: 'started' });
+          await enviarStatusPuppeteer({ id, status: 'started' });
           notifiedStart = true;
-          console.log('✅ Notificação enviada');
+          console.log('✅ Início da live notificado');
         } catch (e) {
-          console.error('⚠️ Erro notificando início da live:', e);
+          console.error('⚠️ Falha ao notificar início:', e);
         }
       }
     }, 60000);
 
     ffmpeg.on('close', async (code) => {
       clearTimeout(timer);
-
       const id = path.basename(inputFile, '.mp4');
+
       if (code === 0) {
-        console.log('✅ Live finalizada. Notificando servidor...');
+        console.log('✅ Live finalizada. Notificando término...');
         try {
           await enviarStatusPuppeteer({ id, status: 'finished' });
         } catch (e) {
-          console.error('⚠️ Erro notificando término:', e);
+          console.error('⚠️ Erro ao notificar término:', e);
         }
         resolve();
       } else {
-        console.error(`❌ ffmpeg finalizou com código ${code}`);
+        console.error(`❌ ffmpeg finalizou com erro (código ${code})`);
         try {
           await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg finalizou com código ${code}` });
         } catch (_) {}
-        reject(new Error(`ffmpeg finalizou com código ${code}`));
+        reject(new Error(`ffmpeg finalizou com erro (código ${code})`));
       }
 
       try {
         fs.unlinkSync(inputFile);
         console.log('🧹 Arquivo de vídeo removido');
       } catch (e) {
-        console.warn('⚠️ Erro ao remover vídeo:', e);
+        console.warn('⚠️ Erro ao excluir vídeo:', e.message);
       }
     });
 
@@ -151,6 +173,7 @@ async function rodarFFmpeg(inputFile, streamUrl) {
   });
 }
 
+// Executa tudo
 async function main() {
   try {
     const jsonPath = process.argv[2];
@@ -160,14 +183,13 @@ async function main() {
     }
 
     const data = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-
     const { id, video_drive_id, stream_url, chave_json } = data;
 
     if (!id || !video_drive_id || !stream_url || !chave_json) {
       throw new Error('JSON deve conter id, video_drive_id, stream_url e chave_json');
     }
 
-    // Salvar chave_json em arquivo temporário para autenticação Google API
+    // Salva chave em disco temporariamente
     const keyFilePath = path.join(process.cwd(), 'chave_temp.json');
     fs.writeFileSync(keyFilePath, chave_json);
 
@@ -178,11 +200,9 @@ async function main() {
 
     await rodarFFmpeg(videoFile, stream_url);
 
-    // Remover arquivo temporário da chave
     fs.unlinkSync(keyFilePath);
-
   } catch (err) {
-    console.error('💥 Erro fatal:', err);
+    console.error('💥 Erro fatal:', err.message);
     process.exit(1);
   }
 }
