@@ -3,30 +3,25 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { google } = require('googleapis');
 const puppeteer = require('puppeteer');
+const { execSync } = require('child_process');
 
 const SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
-const SERVER_STATUS_URL = 'https://livestream.ct.ws/Google%20drive/live/status.php'; // corrigido (%20)
+const SERVER_STATUS_URL = 'https://livestream.ct.ws/Google%20drive/live/status.php';
 
-// Autentica com Google API
+// Helper para autenticar Google API
 async function autenticar(keyFilePath) {
-  const auth = new google.auth.GoogleAuth({
-    keyFile: keyFilePath,
-    scopes: SCOPES,
-  });
+  const auth = new google.auth.GoogleAuth({ keyFile: keyFilePath, scopes: SCOPES });
   return await auth.getClient();
 }
 
-// Faz o download do vídeo
-async function baixarVideo(fileId, dest, keyFilePath) {
+// Download arquivo do Drive
+async function baixarArquivo(fileId, dest, keyFilePath) {
   const auth = await autenticar(keyFilePath);
   const drive = google.drive({ version: 'v3', auth });
 
-  console.log(`⬇️ Baixando vídeo ID ${fileId} para ${dest}...`);
+  console.log(`⬇️ Baixando arquivo ID ${fileId} para ${dest}...`);
 
-  const res = await drive.files.get(
-    { fileId, alt: 'media' },
-    { responseType: 'stream' }
-  );
+  const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
 
   return new Promise((resolve, reject) => {
     const destStream = fs.createWriteStream(dest);
@@ -41,33 +36,31 @@ async function baixarVideo(fileId, dest, keyFilePath) {
     });
 
     destStream.on('error', err => {
-      console.error('❌ Erro ao salvar vídeo:', err);
+      console.error('❌ Erro ao salvar arquivo:', err);
       reject(err);
     });
   });
 }
 
-// Envia status para o servidor via Puppeteer
-async function enviarStatusPuppeteer(data) {
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
+// Obtém duração do vídeo (segundos) usando ffprobe
+function obterDuracaoVideo(filePath) {
+  try {
+    const output = execSync(`ffprobe -v error -show_entries format=duration -of csv=p=0 "${filePath}"`).toString();
+    return parseFloat(output.trim());
+  } catch (err) {
+    console.error('❌ Erro ao obter duração do vídeo:', err);
+    return 0;
+  }
+}
 
+// Envia status para servidor via Puppeteer (igual antes)
+async function enviarStatusPuppeteer(data) {
+  const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox'] });
   try {
     const page = await browser.newPage();
-
-    // Emula o fuso horário de Moçambique
     await page.emulateTimezone('Africa/Maputo');
-
-    console.log(`🌐 Acessando ${SERVER_STATUS_URL}`);
-    await page.goto(SERVER_STATUS_URL, {
-      waitUntil: 'networkidle2',
-      timeout: 60000
-    });
-
-    // Aguarda o JS do servidor ser carregado
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    await page.goto(SERVER_STATUS_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+    await new Promise(r => setTimeout(r, 3000));
 
     const resposta = await page.evaluate(async (payload) => {
       try {
@@ -83,22 +76,26 @@ async function enviarStatusPuppeteer(data) {
       }
     }, data);
 
-    console.log("📡 Resposta do servidor:", resposta);
     await browser.close();
     return resposta;
   } catch (err) {
-    console.error("❌ Erro ao enviar status:", err.message);
     await browser.close();
     throw err;
   }
 }
 
-// Transmite vídeo com ffmpeg
-async function rodarFFmpeg(inputFile, streamUrl) {
+// Função para rodar ffmpeg com overlay de logo e duração máxima
+function rodarFFmpegComLogo(videoFile, logoFile, streamUrl, duracaoMaxSeg) {
   return new Promise((resolve, reject) => {
-    const ffmpeg = spawn('ffmpeg', [
-      '-re', '-i', inputFile,
-      '-vf', 'scale=1280:720,unsharp=5:5:1.0:5:5:0.0,hqdn3d=1.5:1.5:6:6,eq=contrast=1.1:brightness=0.05:saturation=1.1',
+    console.log(`▶️ Iniciando transmissão do vídeo principal com logo por até ${duracaoMaxSeg.toFixed(2)} segundos`);
+
+    const args = [
+      '-re',
+      '-i', videoFile,
+      '-i', logoFile,
+      '-filter_complex',
+      `[1:v] scale=150:-1 [logo]; [0:v][logo] overlay=W-w-10:10,scale=1280:720`,
+      '-t', duracaoMaxSeg.toString(),
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '18',
@@ -111,98 +108,148 @@ async function rodarFFmpeg(inputFile, streamUrl) {
       '-ar', '44100',
       '-f', 'flv',
       streamUrl
-    ]);
+    ];
+
+    const ffmpeg = spawn('ffmpeg', args);
 
     ffmpeg.stdout.on('data', data => process.stdout.write(data));
     ffmpeg.stderr.on('data', data => process.stderr.write(data));
 
-    let notifiedStart = false;
-
-    // Notifica que começou após 60 segundos
-    const timer = setTimeout(async () => {
-      if (!notifiedStart) {
-        const id = path.basename(inputFile, '.mp4');
-        console.log('🔔 Notificando início da live...');
-        try {
-          await enviarStatusPuppeteer({ id, status: 'started' });
-          notifiedStart = true;
-          console.log('✅ Início da live notificado');
-        } catch (e) {
-          console.error('⚠️ Falha ao notificar início:', e);
-        }
-      }
-    }, 60000);
-
-    ffmpeg.on('close', async (code) => {
-      clearTimeout(timer);
-      const id = path.basename(inputFile, '.mp4');
-
+    ffmpeg.on('close', code => {
       if (code === 0) {
-        console.log('✅ Live finalizada. Notificando término...');
-        try {
-          await enviarStatusPuppeteer({ id, status: 'finished' });
-        } catch (e) {
-          console.error('⚠️ Erro ao notificar término:', e);
-        }
+        console.log('✅ Vídeo principal com logo finalizado.');
         resolve();
       } else {
-        console.error(`❌ ffmpeg finalizou com erro (código ${code})`);
-        try {
-          await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg finalizou com código ${code}` });
-        } catch (_) {}
-        reject(new Error(`ffmpeg finalizou com erro (código ${code})`));
-      }
-
-      try {
-        fs.unlinkSync(inputFile);
-        console.log('🧹 Arquivo de vídeo removido');
-      } catch (e) {
-        console.warn('⚠️ Erro ao excluir vídeo:', e.message);
+        reject(new Error(`ffmpeg (vídeo principal) finalizou com código ${code}`));
       }
     });
 
-    ffmpeg.on('error', async (err) => {
-      clearTimeout(timer);
-      const id = path.basename(inputFile, '.mp4');
-      console.error('❌ Erro no ffmpeg:', err);
-      try {
-        await enviarStatusPuppeteer({ id, status: 'error', message: err.message });
-      } catch (_) {}
+    ffmpeg.on('error', err => {
       reject(err);
     });
   });
 }
 
-// Executa tudo
+// Função para rodar vídeos extras (sem logo)
+function rodarVideoExtra(videoFile, streamUrl) {
+  return new Promise((resolve, reject) => {
+    console.log(`▶️ Transmitindo vídeo extra: ${videoFile}`);
+
+    const args = [
+      '-re',
+      '-i', videoFile,
+      '-vf', 'scale=1280:720',
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '18',
+      '-maxrate', '3500k',
+      '-bufsize', '7000k',
+      '-pix_fmt', 'yuv420p',
+      '-g', '50',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-ar', '44100',
+      '-f', 'flv',
+      streamUrl
+    ];
+
+    const ffmpeg = spawn('ffmpeg', args);
+
+    ffmpeg.stdout.on('data', data => process.stdout.write(data));
+    ffmpeg.stderr.on('data', data => process.stderr.write(data));
+
+    ffmpeg.on('close', code => {
+      if (code === 0) {
+        console.log('✅ Vídeo extra finalizado.');
+        resolve();
+      } else {
+        reject(new Error(`ffmpeg (vídeo extra) finalizou com código ${code}`));
+      }
+    });
+
+    ffmpeg.on('error', err => reject(err));
+  });
+}
+
 async function main() {
   try {
     const jsonPath = process.argv[2];
     if (!jsonPath || !fs.existsSync(jsonPath)) {
-      console.error('❌ JSON de entrada não encontrado:', jsonPath);
-      process.exit(1);
+      throw new Error(`JSON de entrada não encontrado: ${jsonPath}`);
     }
 
     const data = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-    const { id, video_drive_id, stream_url, chave_json } = data;
+    const { id, video_drive_id, stream_url, chave_json, logo_id, video_extra_1, video_extra_2, video_extra_3 } = data;
 
     if (!id || !video_drive_id || !stream_url || !chave_json) {
       throw new Error('JSON deve conter id, video_drive_id, stream_url e chave_json');
     }
 
-    // Salva chave em disco temporariamente
     const keyFilePath = path.join(process.cwd(), 'chave_temp.json');
     fs.writeFileSync(keyFilePath, chave_json);
 
-    console.log(`🚀 Iniciando live para vídeo ID: ${id}`);
+    // Paths locais dos vídeos e logo
+    const videoPrincipalPath = path.join(process.cwd(), `${id}.mp4`);
+    const logoPath = path.join(process.cwd(), 'logo.png');
+    const videosExtrasPaths = [
+      video_extra_1 ? path.join(process.cwd(), `extra1.mp4`) : null,
+      video_extra_2 ? path.join(process.cwd(), `extra2.mp4`) : null,
+      video_extra_3 ? path.join(process.cwd(), `extra3.mp4`) : null,
+    ].filter(Boolean);
 
-    const videoFile = path.join(process.cwd(), `${id}.mp4`);
-    await baixarVideo(video_drive_id, videoFile, keyFilePath);
+    // Baixar vídeo principal e logo
+    await baixarArquivo(video_drive_id, videoPrincipalPath, keyFilePath);
+    if (logo_id) {
+      await baixarArquivo(logo_id, logoPath, keyFilePath);
+    } else {
+      console.warn('⚠️ Nenhum logo_id fornecido, logo não será exibido.');
+    }
 
-    await rodarFFmpeg(videoFile, stream_url);
+    // Baixar vídeos extras
+    if (video_extra_1) await baixarArquivo(video_extra_1, videosExtrasPaths[0], keyFilePath);
+    if (video_extra_2) await baixarArquivo(video_extra_2, videosExtrasPaths[1], keyFilePath);
+    if (video_extra_3) await baixarArquivo(video_extra_3, videosExtrasPaths[2], keyFilePath);
 
+    // Obter duração total do vídeo principal
+    const duracaoTotal = obterDuracaoVideo(videoPrincipalPath);
+    if (duracaoTotal <= 0) throw new Error('Duração do vídeo principal inválida');
+
+    // Definir metade da duração
+    const duracaoMetade = duracaoTotal / 2;
+
+    // Notificar que a live vai começar
+    await enviarStatusPuppeteer({ id, status: 'started' });
+
+    // 1) Rodar vídeo principal com logo pela metade da duração
+    await rodarFFmpegComLogo(videoPrincipalPath, logoPath, stream_url, duracaoMetade);
+
+    // 2) Rodar vídeos extras sequencialmente (sem logo)
+    for (const videoExtraPath of videosExtrasPaths) {
+      await rodarVideoExtra(videoExtraPath, stream_url);
+    }
+
+    // 3) Rodar vídeo principal novamente com logo pela metade restante
+    const duracaoRestante = duracaoTotal - duracaoMetade;
+    if (duracaoRestante > 0) {
+      await rodarFFmpegComLogo(videoPrincipalPath, logoPath, stream_url, duracaoRestante);
+    }
+
+    // Notificar fim da live
+    await enviarStatusPuppeteer({ id, status: 'finished' });
+
+    // Limpar arquivos
+    fs.unlinkSync(videoPrincipalPath);
+    if (fs.existsSync(logoPath)) fs.unlinkSync(logoPath);
+    videosExtrasPaths.forEach(p => {
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    });
     fs.unlinkSync(keyFilePath);
+
+    console.log('🏁 Transmissão concluída com sucesso');
+    process.exit(0);
+
   } catch (err) {
-    console.error('💥 Erro fatal:', err.message);
+    console.error('💥 Erro fatal:', err);
     process.exit(1);
   }
 }
