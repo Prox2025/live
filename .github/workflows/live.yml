@@ -21,25 +21,17 @@ jobs:
       - name: 📥 Clonar repositório
         uses: actions/checkout@v4
 
-      - name: ⚙️ Criar package.json e package-lock.json automaticamente
+      - name: ⚙️ Criar package.json automaticamente
         run: |
           echo '{
             "name": "live-stream",
             "version": "1.0.0",
-            "description": "Script para transmissão ao vivo via ffmpeg",
-            "main": "live.js",
-            "scripts": {},
-            "author": "",
-            "license": "ISC",
             "dependencies": {
               "axios": "^1.4.0",
               "fs-extra": "^11.1.1",
               "puppeteer": "^21.3.8"
             }
           }' > package.json
-
-          # Não crie package-lock.json vazio para evitar erros no npm install
-          # echo '{}' > package-lock.json
 
       - name: 📦 Cache do npm
         uses: actions/cache@v3
@@ -49,8 +41,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-npm-cache-
 
-      - name: 📥 Instalar dependências com npm install
+      - name: 📥 Instalar dependências
         run: npm install
+
+      - name: 🛠️ Instalar ffmpeg
+        run: sudo apt update && sudo apt install -y ffmpeg
 
       - name: 🧾 Criar arquivo input.json
         run: |
