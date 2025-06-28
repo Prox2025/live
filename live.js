@@ -1,15 +1,16 @@
-const fs = require('fs-extra');
+const fs = require('fs');
 const { spawn } = require('child_process');
 const puppeteer = require('puppeteer');
 const axios = require('axios');
+const fsExtra = require('fs-extra');
 const path = require('path');
 
-const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL || 'https://livestream.ct.ws/Google%20drive/status.php';
+const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL || 'https://livestream.ct.ws/Google%20drive/live/status.php';
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
 // Envia status ao servidor via Puppeteer
 async function enviarStatusPuppeteer(data) {
-  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+  const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
   try {
     const page = await browser.newPage();
     await page.goto(SERVER_STATUS_URL, { waitUntil: 'networkidle2', timeout: 60000 });
@@ -33,14 +34,11 @@ async function enviarStatusPuppeteer(data) {
   }
 }
 
-// Nova função de download com Puppeteer + Axios
-async function baixarVideo(entrada, destinoFinal) {
-  const url = entrada.startsWith("http")
-    ? entrada
-    : `https://drive.google.com/uc?id=${entrada}&export=download`;
-
-  console.log("🚀 Iniciando Puppeteer...");
-  const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox'] });
+// Baixa vídeo do Google Drive usando Puppeteer e axios
+async function baixarVideo(idOuUrl, destino) {
+  const url = idOuUrl.startsWith('http') ? idOuUrl : `https://drive.google.com/uc?id=${idOuUrl}&export=download`;
+  console.log('🚀 Iniciando Puppeteer para capturar link de download...');
+  const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
   const page = await browser.newPage();
 
   let downloadUrl = null;
@@ -49,63 +47,63 @@ async function baixarVideo(entrada, destinoFinal) {
     const headers = response.headers();
     if (headers['content-disposition'] && headers['content-disposition'].includes('attachment')) {
       downloadUrl = response.url();
-      console.log(`⚡ Capturada URL de download: ${downloadUrl}`);
+      console.log(`⚡ URL capturada de download: ${downloadUrl}`);
     }
   });
 
   console.log(`🌍 Acessando URL: ${url}`);
-  await page.goto(url, { waitUntil: "networkidle2" });
+  await page.goto(url, { waitUntil: 'networkidle2' });
 
   try {
-    console.log("⏳ Aguardando botão de download...");
+    console.log('⏳ Aguardando botão de download...');
     await page.waitForSelector('#uc-download-link', { timeout: 15000 });
 
-    console.log("🖱️ Clicando no botão de download...");
+    console.log('🖱️ Clicando no botão de download...');
     await page.click('#uc-download-link');
 
-    console.log("⏳ Aguardando resposta de download...");
+    console.log('⏳ Aguardando resposta de download...');
     const start = Date.now();
     while (!downloadUrl && (Date.now() - start) < 10000) {
-      await new Promise(r => setTimeout(r, 200));
+      await delay(200);
     }
 
-    if (!downloadUrl) throw new Error("❌ Link de download não capturado.");
+    if (!downloadUrl) throw new Error('❌ Link não capturado.');
 
     await browser.close();
 
-    await fs.ensureDir(path.dirname(destinoFinal));
-    const writer = fs.createWriteStream(destinoFinal);
-
-    console.log("⬇️ Baixando vídeo...");
+    await fsExtra.ensureDir(path.dirname(destino));
+    console.log('⬇️ Baixando vídeo para', destino);
     const response = await axios.get(downloadUrl, { responseType: 'stream' });
+    const writer = fs.createWriteStream(destino);
+
     let totalBytes = 0;
     response.data.on('data', chunk => totalBytes += chunk.length);
     response.data.pipe(writer);
 
     await new Promise((resolve, reject) => {
-      writer.on("finish", resolve);
-      writer.on("error", reject);
+      writer.on('finish', resolve);
+      writer.on('error', reject);
     });
 
-    console.log(`✅ Download concluído (${(totalBytes / 1024 / 1024).toFixed(2)} MB)`);
+    console.log(`✅ Download concluído (${(totalBytes / (1024*1024)).toFixed(2)} MB)`);
+
   } catch (err) {
     await browser.close();
-    console.error("❌ Erro ao baixar vídeo:", err.message);
     throw err;
   }
 }
 
-// Rodar ffmpeg para transmissão ao vivo
+// Rodar ffmpeg para transmissão ao vivo com filtros de qualidade
 async function rodarFFmpeg(inputFile, streamUrl) {
   return new Promise((resolve, reject) => {
     const ffmpeg = spawn('ffmpeg', [
       '-re', '-i', inputFile,
-      '-vf', 'scale=w=1280:h=720:force_original_aspect_ratio=decrease',
+      '-vf', 'scale=1280:720,unsharp=5:5:1.0:5:5:0.0,hqdn3d=1.5:1.5:6:6,eq=contrast=1.1:brightness=0.05:saturation=1.1',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
-      '-crf', '23',
-      '-maxrate', '3000k',
-      '-bufsize', '6000k',
+      '-crf', '20',
+      '-maxrate', '3500k',
+      '-bufsize', '7000k',
       '-pix_fmt', 'yuv420p',
       '-g', '50',
       '-c:a', 'aac',
@@ -149,7 +147,7 @@ async function rodarFFmpeg(inputFile, streamUrl) {
         console.error(`❌ ffmpeg finalizou com código ${code}`);
         try {
           await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg finalizou com código ${code}` });
-        } catch (_) { }
+        } catch (_) {}
         reject(new Error(`ffmpeg finalizou com código ${code}`));
       }
 
@@ -167,13 +165,12 @@ async function rodarFFmpeg(inputFile, streamUrl) {
       console.error('❌ Erro no ffmpeg:', err);
       try {
         await enviarStatusPuppeteer({ id, status: 'error', message: err.message });
-      } catch (_) { }
+      } catch (_) {}
       reject(err);
     });
   });
 }
 
-// Execução principal
 async function main() {
   try {
     const jsonPath = process.argv[2];
@@ -182,7 +179,7 @@ async function main() {
       process.exit(1);
     }
 
-    const { id, video_url, stream_url } = JSON.parse(await fs.readFile(jsonPath, 'utf-8'));
+    const { id, video_url, stream_url } = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
 
     if (!id || !video_url || !stream_url) {
       throw new Error('JSON deve conter id, video_url e stream_url');
@@ -191,7 +188,6 @@ async function main() {
     console.log(`🚀 Iniciando live para vídeo ID: ${id}`);
 
     const videoFile = path.join(process.cwd(), `${id}.mp4`);
-    console.log(`⬇️ Baixando vídeo de ${video_url} para ${videoFile}...`);
     await baixarVideo(video_url, videoFile);
 
     await rodarFFmpeg(videoFile, stream_url);
