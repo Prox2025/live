@@ -4,13 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       id:
-        description: 'ID do vídeo'
+        description: 'ID do vídeo (nome do arquivo no Google Drive)'
         required: true
       stream_url:
-        description: 'URL do stream (RTMP, ex: Facebook Live)'
-        required: true
-      chave_json:
-        description: 'Conteúdo do arquivo chave.json para autenticação Google Drive'
+        description: 'URL do stream (RTMP do Facebook ou outro)'
         required: true
 
 jobs:
@@ -29,7 +26,8 @@ jobs:
             "dependencies": {
               "axios": "^1.4.0",
               "fs-extra": "^11.1.1",
-              "puppeteer": "^21.3.8"
+              "puppeteer": "^21.3.8",
+              "googleapis": "^133.0.0"
             }
           }' > package.json
 
@@ -51,12 +49,11 @@ jobs:
         run: |
           echo '{
             "id": "${{ github.event.inputs.id }}",
-            "stream_url": "${{ github.event.inputs.stream_url }}",
-            "chave_json": ${{ toJson(github.event.inputs.chave_json) }}
+            "stream_url": "${{ github.event.inputs.stream_url }}"
           }' > input.json
 
       - name: ▶️ Executar live.js
-        run: node live.js input.json
+        run: node live.js input.json chave.json
 
       - name: ✅ Upload do vídeo original (para depuração)
         if: always()
