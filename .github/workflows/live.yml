@@ -6,11 +6,11 @@ on:
       id:
         description: 'ID do vídeo'
         required: true
-      video_url:
-        description: 'URL do vídeo para download (Google Drive)'
-        required: true
       stream_url:
         description: 'URL do stream (RTMP, ex: Facebook Live)'
+        required: true
+      chave_json:
+        description: 'Conteúdo do arquivo chave.json para autenticação Google Drive'
         required: true
 
 jobs:
@@ -51,14 +51,14 @@ jobs:
         run: |
           echo '{
             "id": "${{ github.event.inputs.id }}",
-            "video_url": "${{ github.event.inputs.video_url }}",
-            "stream_url": "${{ github.event.inputs.stream_url }}"
+            "stream_url": "${{ github.event.inputs.stream_url }}",
+            "chave_json": ${{ toJson(github.event.inputs.chave_json) }}
           }' > input.json
 
       - name: ▶️ Executar live.js
         run: node live.js input.json
 
-      - name: ✅ Upload do vídeo original (apenas para depuração)
+      - name: ✅ Upload do vídeo original (para depuração)
         if: always()
         uses: actions/upload-artifact@v4
         with:
