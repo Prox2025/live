@@ -38,7 +38,8 @@ jobs:
             }
           }' > package.json
 
-          echo '{}' > package-lock.json
+          # Não crie package-lock.json vazio para evitar erros no npm install
+          # echo '{}' > package-lock.json
 
       - name: 📦 Cache do npm
         uses: actions/cache@v3
@@ -48,8 +49,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-npm-cache-
 
-      - name: 📥 Instalar dependências com npm ci
-        run: npm ci
+      - name: 📥 Instalar dependências com npm install
+        run: npm install
 
       - name: 🧾 Criar arquivo input.json
         run: |
