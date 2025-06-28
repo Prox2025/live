@@ -1,4 +1,4 @@
-name: Iniciar Live Automática
+name: Iniciar Live com Cache e Criação Automática do package.json
 
 on:
   workflow_dispatch:
@@ -7,32 +7,64 @@ on:
         description: 'ID do vídeo'
         required: true
       video_url:
-        description: 'URL do vídeo Google Drive'
+        description: 'URL do vídeo para download (Google Drive)'
         required: true
       stream_url:
-        description: 'URL do Facebook Live (stream_url)'
+        description: 'URL do stream (RTMP, ex: Facebook Live)'
         required: true
 
 jobs:
-  live:
+  run-live:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 🛒 Clonar repositório
+      - name: 📥 Clonar repositório
         uses: actions/checkout@v4
 
-      - name: ⚙️ Instalar Node.js e dependências
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: 🧩 Instalar Puppeteer e pacotes do sistema
+      - name: ⚙️ Criar package.json e package-lock.json automaticamente
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libgbm-dev ffmpeg wget
-          npm install puppeteer
+          echo '{
+            "name": "live-stream",
+            "version": "1.0.0",
+            "description": "Script para transmissão ao vivo via ffmpeg",
+            "main": "live.js",
+            "scripts": {},
+            "author": "",
+            "license": "ISC",
+            "dependencies": {
+              "axios": "^1.4.0",
+              "fs-extra": "^11.1.1",
+              "puppeteer": "^21.3.8"
+            }
+          }' > package.json
 
-      - name: 🚀 Baixar vídeo e iniciar live
-        run: node live.js "${{ github.event.inputs.video_url }}"
-        env:
-          STREAM_URL: ${{ github.event.inputs.stream_url }}
+          echo '{}' > package-lock.json
+
+      - name: 📦 Cache do npm
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-cache-${{ hashFiles('package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-cache-
+
+      - name: 📥 Instalar dependências com npm ci
+        run: npm ci
+
+      - name: 🧾 Criar arquivo input.json
+        run: |
+          echo '{
+            "id": "${{ github.event.inputs.id }}",
+            "video_url": "${{ github.event.inputs.video_url }}",
+            "stream_url": "${{ github.event.inputs.stream_url }}"
+          }' > input.json
+
+      - name: ▶️ Executar live.js
+        run: node live.js input.json
+
+      - name: ✅ Upload do vídeo original (apenas para depuração)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-${{ github.event.inputs.id }}
+          path: ${{ github.event.inputs.id }}.mp4
