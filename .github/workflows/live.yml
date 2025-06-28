@@ -4,16 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       id:
-        description: 'ID do vídeo (nome do arquivo sem extensão)'
+        description: 'Nome do vídeo (ex: a2c438366d)'
+        required: true
+      video_drive_id:
+        description: 'ID real do vídeo no Google Drive'
         required: true
       stream_url:
         description: 'URL do stream (RTMP, ex: Facebook Live)'
         required: true
       chave_json:
         description: 'Conteúdo do arquivo chave.json para autenticação Google Drive'
-        required: true
-      video_drive_id:
-        description: 'ID real do arquivo de vídeo no Google Drive'
         required: true
 
 jobs:
@@ -30,8 +30,8 @@ jobs:
             "name": "live-stream",
             "version": "1.0.0",
             "dependencies": {
-              "googleapis": "^131.0.0",
-              "puppeteer": "^21.3.8"
+              "puppeteer": "^21.3.8",
+              "googleapis": "^118.0.0"
             }
           }' > package.json
 
@@ -49,19 +49,22 @@ jobs:
       - name: 🛠️ Instalar ffmpeg
         run: sudo apt update && sudo apt install -y ffmpeg
 
-      - name: 🧾 Criar arquivo input.json
+      - name: 📄 Criar input.json
         run: |
-          echo '${{ toJson({
-            id: github.event.inputs.id,
-            stream_url: github.event.inputs.stream_url,
-            chave_json: github.event.inputs.chave_json,
-            video_drive_id: github.event.inputs.video_drive_id
-          }) } }' > input.json
+          echo '{
+            "id": "${{ github.event.inputs.id }}",
+            "video_drive_id": "${{ github.event.inputs.video_drive_id }}",
+            "stream_url": "${{ github.event.inputs.stream_url }}",
+            "chave_json": ${{ toJson(github.event.inputs.chave_json) }}
+          }' > input.json
+
+      - name: 🧾 Mostrar conteúdo do input.json
+        run: cat input.json
 
       - name: ▶️ Executar live.js
         run: node live.js input.json
 
-      - name: ✅ Upload do vídeo original (para depuração)
+      - name: 📤 Upload do vídeo original (para depuração)
         if: always()
         uses: actions/upload-artifact@v4
         with:
