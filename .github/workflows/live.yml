@@ -1,4 +1,4 @@
-name: Montar vídeo do Google Drive e iniciar Live
+name: Montar vídeo e iniciar Live Facebook
 
 on:
   workflow_dispatch:
@@ -45,7 +45,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🔐 Salvar chave.json
-        run: echo '${{ github.event.inputs.chave_json }}' > chave.json
+        run: echo "${{ github.event.inputs.chave_json }}" > chave.json
 
       - name: 🧾 Criar input.json
         run: |
@@ -81,21 +81,14 @@ EOF
         run: |
           sudo apt update
           sudo apt install -y ffmpeg nodejs npm
+          npm install googleapis puppeteer
 
-      - name: 📦 Criar package.json automaticamente
+      - name: 🧪 Verificar ambiente
         run: |
-          cat << 'EOF' > package.json
-{
-  "name": "live-stream-gdrive",
-  "version": "1.0.0",
-  "type": "module",
-  "dependencies": {
-    "googleapis": "^105.0.0",
-    "puppeteer": "^21.3.8"
-  }
-}
-EOF
-          npm install
+          node -v
+          ffmpeg -version
+          ls -la
+          cat input.json
 
       - name: 🧠 Executar unir.js
         run: node unir.js
@@ -133,10 +126,8 @@ EOF
           name: live-artifacts
           path: |
             video_unido.mp4
-            stream_info.json
             logo.png
+            stream_info.json
 
-      - name: 🧠 Iniciar Live com live.js
+      - name: 🧠 Executar live.js para iniciar live Facebook com vídeo e logo
         run: node live.js
-        env:
-          KEYFILE: chave.json
