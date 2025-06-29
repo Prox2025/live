@@ -49,7 +49,7 @@ jobs:
 
       - name: 🧾 Criar input.json
         run: |
-          videos_opcionais='[]'
+          videos_opcionais="[]"
           if [ -n "${{ github.event.inputs.video_extra_1 }}" ]; then
             videos_opcionais="[\"${{ github.event.inputs.video_extra_1 }}\"]"
           fi
@@ -57,14 +57,14 @@ jobs:
             if [ "$videos_opcionais" = "[]" ]; then
               videos_opcionais="[\"${{ github.event.inputs.video_extra_2 }}\"]"
             else
-              videos_opcionais=$(echo $videos_opcionais | sed 's/]$/, \"${{ github.event.inputs.video_extra_2 }}\"]/')
+              videos_opcionais=${videos_opcionais::-1},\"${{ github.event.inputs.video_extra_2 }}\"]"
             fi
           fi
           if [ -n "${{ github.event.inputs.video_extra_3 }}" ]; then
             if [ "$videos_opcionais" = "[]" ]; then
               videos_opcionais="[\"${{ github.event.inputs.video_extra_3 }}\"]"
             else
-              videos_opcionais=$(echo $videos_opcionais | sed 's/]$/, \"${{ github.event.inputs.video_extra_3 }}\"]/')
+              videos_opcionais=${videos_opcionais::-1},\"${{ github.event.inputs.video_extra_3 }}\"]"
             fi
           fi
           cat <<EOF > input.json
@@ -90,7 +90,7 @@ EOF
           INPUTFILE: input.json
 
       - name: ⬇️ Baixar logo (se fornecido)
-        if: ${{ github.event.inputs.logo_id != '' }}
+        if: ${{ github.event.inputs.logo_id != '' && github.event.inputs.logo_id != null }}
         run: |
           node -e "
             const fs = require('fs');
@@ -123,3 +123,6 @@ EOF
 
       - name: 🧠 Executar live.js para iniciar live Facebook com vídeo e logo
         run: node live.js
+        env:
+          KEYFILE: chave.json
+          ARTIFACT_PATH: '.'  # diretório atual, já com os arquivos baixados
