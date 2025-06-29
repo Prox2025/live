@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       chave_json:
-        description: 'Chave JSON completa em texto (string)'
+        description: 'Chave JSON completa (string)'
         required: true
         type: string
       logo_id:
@@ -32,7 +32,7 @@ on:
         required: false
         type: string
       stream_url:
-        description: 'URL da stream do Facebook para iniciar a live'
+        description: 'URL da stream do Facebook'
         required: true
         type: string
 
@@ -44,38 +44,39 @@ jobs:
       - name: 🔽 Clonar repositório
         uses: actions/checkout@v4
 
-      - name: 🔐 Salvar chave.json
-        run: echo "${{ github.event.inputs.chave_json }}" > chave.json
-
-      - name: 🧾 Criar input.json
-        run: |
-          opcional=()
-          [ -n "${{ github.event.inputs.video_extra_1 }}" ] && opcional+=("\"${{ github.event.inputs.video_extra_1 }}\"")
-          [ -n "${{ github.event.inputs.video_extra_2 }}" ] && opcional+=("\"${{ github.event.inputs.video_extra_2 }}\"")
-          [ -n "${{ github.event.inputs.video_extra_3 }}" ] && opcional+=("\"${{ github.event.inputs.video_extra_3 }}\"")
-
-          lista="["
-          for item in "${opcional[@]}"; do
-            lista+="$item,"
-          done
-          lista="${lista%,}"
-          lista+="]"
-
-          cat <<EOF > input.json
-{
-  "id": "${{ github.event.inputs.id }}",
-  "video_principal": "${{ github.event.inputs.video_drive_id }}",
-  "logo_id": "${{ github.event.inputs.logo_id }}",
-  "videos_opcionais": $lista,
-  "stream_url": "${{ github.event.inputs.stream_url }}"
-}
-EOF
-
-      - name: ⚙️ Instalar dependências
+      - name: 🛠️ Instalar dependências
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg nodejs npm
+          sudo apt install -y ffmpeg nodejs npm jq
           npm install googleapis puppeteer
+
+      - name: 🔐 Salvar chave.json
+        run: echo '${{ github.event.inputs.chave_json }}' > chave.json
+
+      - name: 🧾 Criar input.json válido com jq
+        run: |
+          echo '{}' | jq \
+            --arg id "${{ github.event.inputs.id }}" \
+            --arg principal "${{ github.event.inputs.video_drive_id }}" \
+            --arg logo "${{ github.event.inputs.logo_id }}" \
+            --argjson extras "$(jq -nc '[
+              $ENV.V1, $ENV.V2, $ENV.V3
+            ] | map(select(. != null and . != ""))')" \
+            --arg stream "${{ github.event.inputs.stream_url }}" \
+            '
+            .id = $id
+            | .video_principal = $principal
+            | .logo_id = $logo
+            | .videos_opcionais = $extras
+            | .stream_url = $stream
+            ' > input.json
+        env:
+          V1: ${{ github.event.inputs.video_extra_1 }}
+          V2: ${{ github.event.inputs.video_extra_2 }}
+          V3: ${{ github.event.inputs.video_extra_3 }}
+
+      - name: 📂 Exibir input.json
+        run: cat input.json
 
       - name: 🧠 Executar unir.js
         run: node unir.js
@@ -84,13 +85,13 @@ EOF
           INPUTFILE: input.json
 
       - name: ⬇️ Baixar logo (se fornecido)
-        if: ${{ github.event.inputs.logo_id != '' }}
+        if: ${{ github.event.inputs.logo_id != '' && github.event.inputs.logo_id != null }}
         run: |
           node -e "
             const fs = require('fs');
             const { google } = require('googleapis');
-            const keyFile = 'chave.json';
-            async function baixar() {
+            (async () => {
+              const keyFile = 'chave.json';
               const auth = new (require('googleapis').google.auth.GoogleAuth)({keyFile, scopes: ['https://www.googleapis.com/auth/drive.readonly']});
               const client = await auth.getClient();
               const drive = google.drive({version: 'v3', auth: client});
@@ -99,22 +100,24 @@ EOF
               res.data.pipe(dest);
               await new Promise(resolve => dest.on('finish', resolve));
               console.log('✅ Logo baixado');
-            }
-            baixar().catch(e => {console.error(e); process.exit(1);});
+            })().catch(e => {console.error(e); process.exit(1);});
           "
 
-      - name: 💾 Salvar stream_info.json
+      - name: 🧾 Criar stream_info.json
         run: |
           echo "{\"stream_url\":\"${{ github.event.inputs.stream_url }}\",\"video_id\":\"${{ github.event.inputs.id }}\"}" > stream_info.json
 
-      - name: 📤 Enviar artefatos
+      - name: 📤 Enviar artefatos (vídeo final, logo, info)
         uses: actions/upload-artifact@v4
         with:
           name: live-artifacts
           path: |
             video_unido.mp4
-            stream_info.json
             logo.png
+            stream_info.json
 
-      - name: 📡 Iniciar Live (executar live.js)
+      - name: 📡 Iniciar transmissão com live.js
         run: node live.js
+        env:
+          KEYFILE: chave.json
+          ARTIFACT_PATH: '.'
