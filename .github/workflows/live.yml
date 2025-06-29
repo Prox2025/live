@@ -43,7 +43,9 @@ jobs:
             "version": "1.0.0",
             "dependencies": {
               "puppeteer": "^21.3.8",
-              "googleapis": "^118.0.0"
+              "googleapis": "^118.0.0",
+              "fluent-ffmpeg": "^2.1.2",
+              "get-video-duration": "^4.0.0"
             }
           }' > package.json
 
@@ -63,16 +65,16 @@ jobs:
 
       - name: 📄 Criar input.json
         run: |
-          echo '{
-            "id": "${{ github.event.inputs.id }}",
-            "video_drive_id": "${{ github.event.inputs.video_drive_id }}",
-            "stream_url": "${{ github.event.inputs.stream_url }}",
-            "chave_json": ${{ toJson(github.event.inputs.chave_json) }},
-            "logo_id": "${{ github.event.inputs.logo_id }}",
-            "video_extra_1": "${{ github.event.inputs.video_extra_1 }}",
-            "video_extra_2": "${{ github.event.inputs.video_extra_2 }}",
-            "video_extra_3": "${{ github.event.inputs.video_extra_3 }}"
-          }' > input.json
+          echo '${{ toJson({
+            id: github.event.inputs.id,
+            video_drive_id: github.event.inputs.video_drive_id,
+            stream_url: github.event.inputs.stream_url,
+            chave_json: fromJson(github.event.inputs.chave_json),
+            logo_id: github.event.inputs.logo_id,
+            video_extra_1: github.event.inputs.video_extra_1,
+            video_extra_2: github.event.inputs.video_extra_2,
+            video_extra_3: github.event.inputs.video_extra_3
+          }) }}' > input.json
 
       - name: 🧾 Mostrar conteúdo do input.json
         run: cat input.json
@@ -80,9 +82,9 @@ jobs:
       - name: ▶️ Executar live.js
         run: node live.js input.json
 
-      - name: 📤 Upload do vídeo original (para depuração)
+      - name: 📤 Upload do vídeo final (para depuração)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: video-${{ github.event.inputs.id }}
-          path: ${{ github.event.inputs.id }}.mp4
+          name: final-video-${{ github.event.inputs.id }}
+          path: final_${{ github.event.inputs.id }}.mp4
