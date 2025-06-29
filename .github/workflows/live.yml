@@ -1,4 +1,4 @@
-name: Montar vídeo e iniciar Live Facebook
+name: Montar vídeo do Google Drive e iniciar Live
 
 on:
   workflow_dispatch:
@@ -67,7 +67,7 @@ jobs:
               videos_opcionais=$(echo $videos_opcionais | sed 's/]$/, \"${{ github.event.inputs.video_extra_3 }}\"]/')
             fi
           fi
-          cat << EOF > input.json
+          cat <<EOF > input.json
 {
   "id": "${{ github.event.inputs.id }}",
   "video_principal": "${{ github.event.inputs.video_drive_id }}",
@@ -83,13 +83,6 @@ EOF
           sudo apt install -y ffmpeg nodejs npm
           npm install googleapis puppeteer
 
-      - name: 🧪 Verificar ambiente
-        run: |
-          node -v
-          ffmpeg -version
-          ls -la
-          cat input.json
-
       - name: 🧠 Executar unir.js
         run: node unir.js
         env:
@@ -102,8 +95,8 @@ EOF
           node -e "
             const fs = require('fs');
             const { google } = require('googleapis');
-            const keyFile = 'chave.json';
-            async function baixar() {
+            (async () => {
+              const keyFile = 'chave.json';
               const auth = new (require('googleapis').google.auth.GoogleAuth)({keyFile, scopes: ['https://www.googleapis.com/auth/drive.readonly']});
               const client = await auth.getClient();
               const drive = google.drive({version: 'v3', auth: client});
@@ -112,11 +105,10 @@ EOF
               res.data.pipe(dest);
               await new Promise(resolve => dest.on('finish', resolve));
               console.log('Logo baixado');
-            }
-            baixar().catch(e => {console.error(e); process.exit(1);});
+            })().catch(e => {console.error(e); process.exit(1);});
           "
 
-      - name: 📂 Salvar stream_info.json
+      - name: 📂 Salvar stream_url e id no arquivo stream_info.json
         run: |
           echo "{\"stream_url\":\"${{ github.event.inputs.stream_url }}\",\"video_id\":\"${{ github.event.inputs.id }}\"}" > stream_info.json
 
