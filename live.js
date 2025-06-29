@@ -49,22 +49,24 @@ async function enviarStatusPuppeteer(data) {
 
 async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
   return new Promise((resolve, reject) => {
-    const filtroLogo = logoPath
-      ? `[1:v]format=rgba,rotate=PI*t/1.5:c=none:ow=rotw(iw):oh=roth(ih)[logo];` +
-        `[0:v][logo]overlay=W-w-10:10:shortest=1`
-      : 'null'; // Se não houver logo, usa filtro nulo
+    let filtroLogo = '';
+    const temLogo = logoPath && fs.existsSync(logoPath);
 
-    const ffmpegArgs = [
-      '-re',
-      '-i', videoPath,
-    ];
-
-    if (logoPath && fs.existsSync(logoPath)) {
-      ffmpegArgs.push('-loop', '1', '-i', logoPath);
+    if (temLogo) {
+      // Rotação completa 2PI rad em 3 segundos = 2*PI*t/3
+      filtroLogo = `[1:v]format=rgba,rotate=2*PI*t/3:c=none:ow=rotw(2*PI*t/3):oh=roth(2*PI*t/3)[logo];` +
+                   `[0:v][logo]overlay=W-w-10:10:shortest=1`;
     }
 
-    ffmpegArgs.push(
-      '-filter_complex', filtroLogo,
+    const args = ['-re', '-i', videoPath];
+
+    if (temLogo) {
+      // -loop 1 para manter o logo como vídeo estático
+      args.push('-loop', '1', '-i', logoPath);
+      args.push('-filter_complex', filtroLogo);
+    }
+
+    args.push(
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '18',
@@ -79,7 +81,8 @@ async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
       streamUrl
     );
 
-    const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+    console.log('🔧 Executando ffmpeg com args:', args.join(' '));
+    const ffmpeg = spawn('ffmpeg', args);
 
     ffmpeg.stdout.on('data', data => process.stdout.write(data));
     ffmpeg.stderr.on('data', data => process.stderr.write(data));
@@ -98,7 +101,7 @@ async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
       }
     }, 60000);
 
-    ffmpeg.on('close', async code => {
+    ffmpeg.on('close', async (code) => {
       clearTimeout(timer);
       if (code === 0) {
         console.log('✅ Live finalizada. Notificando término...');
@@ -117,7 +120,7 @@ async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
       }
     });
 
-    ffmpeg.on('error', async err => {
+    ffmpeg.on('error', async (err) => {
       clearTimeout(timer);
       console.error('❌ Erro fatal no ffmpeg:', err);
       try {
@@ -143,7 +146,8 @@ async function main() {
     if (!stream_url || !video_id) throw new Error('stream_url ou video_id ausente');
 
     console.log(`🚀 Iniciando transmissão para ${stream_url}`);
-    await rodarFFmpegComLogo(videoPath, fs.existsSync(logoPath) ? logoPath : null, stream_url, video_id);
+    await rodarFFmpegComLogo(videoPath, logoPath, stream_url, video_id);
+
   } catch (err) {
     console.error('💥 Erro fatal:', err.message);
     process.exit(1);
