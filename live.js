@@ -15,7 +15,6 @@ async function enviarStatusPuppeteer(data) {
     const page = await browser.newPage();
     await page.emulateTimezone('Africa/Maputo');
 
-    console.log(`🌐 Acessando ${SERVER_STATUS_URL}`);
     await page.goto(SERVER_STATUS_URL, {
       waitUntil: 'networkidle2',
       timeout: 60000
@@ -49,38 +48,30 @@ async function enviarStatusPuppeteer(data) {
 
 async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
   return new Promise((resolve, reject) => {
-    const ffmpegArgs = ['-re', '-i', videoPath]; // Apenas o vídeo com -re
+    if (!fs.existsSync(videoPath)) {
+      return reject(new Error(`Vídeo não encontrado: ${videoPath}`));
+    }
 
-    let filtroComplex = '';
-    let mapArgs = ['-map', '0:v']; // vídeo principal
+    const args = ['-re', '-i', videoPath];
+    let filterComplex = '';
+    let maps = ['-map', '[vout]', '-map', '0:a?', '-c:a', 'aac', '-b:a', '192k', '-ar', '44100'];
 
     if (logoPath && fs.existsSync(logoPath)) {
-      ffmpegArgs.push('-i', logoPath); // Logo entra como segundo input (1:v)
+      args.push('-loop', '1', '-i', logoPath);
 
-      // Efeito: rotação a cada 5 segundos
-      // Calcula o ângulo com base no tempo (mod 5 segundos): 0°, 90°, 180°, 270°, 360°
-      filtroComplex = `
-        [1:v]scale=iw/6:ih/6,format=rgba,
-        rotate=PI/2*floor(mod(t\\,5)/1):c=none:ow=rotw(iw):oh=roth(ih)[logo];
-        [0:v][logo]overlay=W-w-1:1:shortest=1
+      filterComplex = `
+        [0:v]unsharp=5:5:1.0:5:5:0.0[base];
+        [1:v]scale=100:100,format=rgba,
+        rotate=PI/2*mod(t\\,5):c=none:ow=rotw(iw):oh=roth(ih)[logo];
+        [base][logo]overlay=W-w-1:1[vout]
       `.replace(/\s+/g, ' ');
-
-      mapArgs = ['-map', '[vout]'];
-    }
-
-    if (filtroComplex) {
-      ffmpegArgs.push('-filter_complex', `[0:v]unsharp=5:5:1.0:5:5:0.0[base];${filtroComplex.replace('[0:v]', '[base]')}[vout]`);
     } else {
-      ffmpegArgs.push('-vf', 'unsharp=5:5:1.0:5:5:0.0');
+      // Sem logo
+      filterComplex = `[0:v]unsharp=5:5:1.0:5:5:0.0[vout]`;
     }
 
-    ffmpegArgs.push(...mapArgs);
-
-    // Áudio (se existir)
-    ffmpegArgs.push('-map', '0:a?', '-c:a', 'aac', '-b:a', '192k', '-ar', '44100');
-
-    // Codificação e envio
-    ffmpegArgs.push(
+    args.push(
+      '-filter_complex', filterComplex,
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '18',
@@ -88,12 +79,14 @@ async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
       '-bufsize', '7000k',
       '-pix_fmt', 'yuv420p',
       '-g', '50',
+      ...maps,
       '-f', 'flv',
       streamUrl
     );
 
-    console.log('🎥 Comando FFmpeg:', ffmpegArgs.join(' '));
-    const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+    console.log(`🎥 Comando FFmpeg: ffmpeg ${args.join(' ')}`);
+
+    const ffmpeg = spawn('ffmpeg', args);
 
     ffmpeg.stdout.on('data', data => process.stdout.write(data));
     ffmpeg.stderr.on('data', data => process.stderr.write(data));
@@ -101,11 +94,9 @@ async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
     let notificado = false;
     const timer = setTimeout(async () => {
       if (!notificado) {
-        console.log('🔔 Notificando início da live...');
         try {
           await enviarStatusPuppeteer({ id, status: 'started' });
           notificado = true;
-          console.log('✅ Início da live notificado');
         } catch (e) {
           console.error('⚠️ Erro ao notificar início:', e.message);
         }
@@ -115,7 +106,6 @@ async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
     ffmpeg.on('close', async code => {
       clearTimeout(timer);
       if (code === 0) {
-        console.log('✅ Live finalizada. Notificando término...');
         try {
           await enviarStatusPuppeteer({ id, status: 'finished' });
         } catch (e) {
@@ -123,20 +113,14 @@ async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
         }
         resolve();
       } else {
-        console.error(`❌ ffmpeg finalizou com erro (código ${code})`);
-        try {
-          await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg finalizou com código ${code}` });
-        } catch (_) {}
-        reject(new Error(`ffmpeg erro ${code}`));
+        await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg finalizou com código ${code}` });
+        reject(new Error(`ffmpeg finalizou com código ${code}`));
       }
     });
 
     ffmpeg.on('error', async err => {
       clearTimeout(timer);
-      console.error('❌ Erro fatal no ffmpeg:', err);
-      try {
-        await enviarStatusPuppeteer({ id, status: 'error', message: err.message });
-      } catch (_) {}
+      await enviarStatusPuppeteer({ id, status: 'error', message: err.message });
       reject(err);
     });
   });
