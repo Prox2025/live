@@ -1,152 +1,257 @@
 const fs = require('fs');
 const path = require('path');
-const { spawn, execSync } = require('child_process');
+const { spawn } = require('child_process');
 const { google } = require('googleapis');
 const puppeteer = require('puppeteer');
+const { getVideoDurationInSeconds } = require('get-video-duration');
+const ffmpeg = require('fluent-ffmpeg');
 
 const SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
-const SERVER_STATUS_URL = 'https://livestream.ct.ws/Google%20drive/live/status.php';
+const SERVER_STATUS_URL = 'https://livestream.ct.ws/Google drive/live/status.php';
 
-// AutenticaÃ§Ã£o
+// === Autenticação Google Drive ===
 async function autenticar(keyFilePath) {
-  const auth = new google.auth.GoogleAuth({ keyFile: keyFilePath, scopes: SCOPES });
+  const auth = new google.auth.GoogleAuth({
+    keyFile: keyFilePath,
+    scopes: SCOPES,
+  });
   return await auth.getClient();
 }
 
-// Baixar arquivo
 async function baixarArquivo(fileId, dest, keyFilePath) {
   const auth = await autenticar(keyFilePath);
   const drive = google.drive({ version: 'v3', auth });
 
+  console.log(`⬇️ Baixando ${fileId} → ${dest}`);
   const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
+
   return new Promise((resolve, reject) => {
     const destStream = fs.createWriteStream(dest);
     res.data.pipe(destStream);
+    res.data.on('end', () => {
+      console.log(`✅ Arquivo salvo: ${dest}`);
+      resolve();
+    });
     res.data.on('error', reject);
-    destStream.on('finish', resolve);
-    destStream.on('error', reject);
   });
 }
 
-// DuraÃ§Ã£o do vÃ­deo
-function obterDuracao(filePath) {
-  try {
-    const output = execSync(`ffprobe -v error -show_entries format=duration -of csv=p=0 "${filePath}"`).toString();
-    return parseFloat(output.trim());
-  } catch {
-    return 0;
-  }
+async function dividirVideoEmDuasPartes(inputPath, parte1, parte2) {
+  const duracao = await getVideoDurationInSeconds(inputPath);
+  const meio = duracao / 2;
+
+  return new Promise((resolve, reject) => {
+    const { exec } = require('child_process');
+    const cmd1 = `ffmpeg -y -i "${inputPath}" -t ${meio} -c copy "${parte1}"`;
+    const cmd2 = `ffmpeg -y -i "${inputPath}" -ss ${meio} -c copy "${parte2}"`;
+
+    exec(cmd1, (err) => {
+      if (err) return reject(err);
+      exec(cmd2, (err2) => {
+        if (err2) return reject(err2);
+        resolve();
+      });
+    });
+  });
 }
 
-// Enviar status via Puppeteer
+async function montarVideoFinal(comPartes, logoPath, saidaFinal) {
+  const listaTxt = 'lista.txt';
+  fs.writeFileSync(listaTxt, comPartes.map(v => `file '${v}'`).join('\n'));
+
+  const videoCombinado = 'combinado.mp4';
+
+  // Concatena vídeos
+  await new Promise((resolve, reject) => {
+    const { exec } = require('child_process');
+    const cmd = `ffmpeg -y -f concat -safe 0 -i "${listaTxt}" -c copy "${videoCombinado}"`;
+    exec(cmd, (err) => {
+      if (err) return reject(err);
+      fs.unlinkSync(listaTxt);
+      resolve();
+    });
+  });
+
+  // Sobrepõe logo com rotação
+  return new Promise((resolve, reject) => {
+    ffmpeg(videoCombinado)
+      .input(logoPath)
+      .complexFilter([
+        {
+          filter: 'overlay',
+          options: {
+            x: '(main_w-overlay_w)-10',
+            y: '10',
+            enable: 'lt(mod(t,6),3)' // gira a cada 3 segundos (3 on, 3 off)
+          }
+        }
+      ])
+      .videoCodec('libx264')
+      .audioCodec('aac')
+      .size('1280x720')
+      .outputOptions(['-preset veryfast', '-crf 23'])
+      .output(saidaFinal)
+      .on('end', () => {
+        try { fs.unlinkSync(videoCombinado); } catch (_) {}
+        resolve();
+      })
+      .on('error', reject)
+      .run();
+  });
+}
+
+// === Notificação do status via Puppeteer ===
 async function enviarStatusPuppeteer(data) {
-  const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
+
   try {
     const page = await browser.newPage();
     await page.emulateTimezone('Africa/Maputo');
     await page.goto(SERVER_STATUS_URL, { waitUntil: 'networkidle2', timeout: 60000 });
-    await new Promise(res => setTimeout(res, 3000));
-    const response = await page.evaluate(async (payload) => {
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    const resposta = await page.evaluate(async (payload) => {
       try {
         const res = await fetch(window.location.href, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        return { status: res.status, texto: await res.text() };
+        const texto = await res.text();
+        return { status: res.status, texto };
       } catch (e) {
-        return { status: 500, texto: 'Erro interno: ' + e.message };
+        return { status: 500, texto: 'Erro interno no fetch: ' + e.message };
       }
     }, data);
+
+    console.log("📡 Resposta:", resposta);
     await browser.close();
-    return response;
-  } catch (e) {
+    return resposta;
+  } catch (err) {
+    console.error("❌ Erro ao enviar status:", err.message);
     await browser.close();
-    throw e;
+    throw err;
   }
 }
 
-// Executar live
+async function rodarFFmpeg(inputFile, streamUrl) {
+  return new Promise((resolve, reject) => {
+    const ffmpegProcess = spawn('ffmpeg', [
+      '-re', '-i', inputFile,
+      '-vf', 'scale=1280:720,unsharp=5:5:1.0:5:5:0.0,hqdn3d=1.5:1.5:6:6,eq=contrast=1.1:brightness=0.05:saturation=1.1',
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '18',
+      '-maxrate', '3500k',
+      '-bufsize', '7000k',
+      '-pix_fmt', 'yuv420p',
+      '-g', '50',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-ar', '44100',
+      '-f', 'flv',
+      streamUrl
+    ]);
+
+    ffmpegProcess.stdout.on('data', data => process.stdout.write(data));
+    ffmpegProcess.stderr.on('data', data => process.stderr.write(data));
+
+    let notified = false;
+    const timer = setTimeout(async () => {
+      if (!notified) {
+        notified = true;
+        const id = path.basename(inputFile, '.mp4');
+        try {
+          await enviarStatusPuppeteer({ id, status: 'started' });
+        } catch (e) { console.error('⚠️ Erro ao notificar início:', e); }
+      }
+    }, 60000);
+
+    ffmpegProcess.on('close', async (code) => {
+      clearTimeout(timer);
+      const id = path.basename(inputFile, '.mp4');
+
+      if (code === 0) {
+        console.log('✅ Live finalizada');
+        await enviarStatusPuppeteer({ id, status: 'finished' });
+        try { fs.unlinkSync(inputFile); } catch (_) {}
+        resolve();
+      } else {
+        console.error(`❌ ffmpeg saiu com código ${code}`);
+        await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg code ${code}` });
+        reject(new Error(`ffmpeg code ${code}`));
+      }
+    });
+
+    ffmpegProcess.on('error', async (err) => {
+      clearTimeout(timer);
+      const id = path.basename(inputFile, '.mp4');
+      await enviarStatusPuppeteer({ id, status: 'error', message: err.message });
+      reject(err);
+    });
+  });
+}
+
+// === Função principal ===
 async function main() {
   try {
     const jsonPath = process.argv[2];
-    if (!jsonPath || !fs.existsSync(jsonPath)) throw new Error("input.json nÃ£o encontrado");
+    if (!jsonPath || !fs.existsSync(jsonPath)) {
+      console.error('❌ JSON de entrada não encontrado:', jsonPath);
+      process.exit(1);
+    }
 
-    const { id, video_drive_id, stream_url, chave_json, logo_id, video_extra_1, video_extra_2, video_extra_3 } = JSON.parse(fs.readFileSync(jsonPath));
+    const data = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    const { id, video_drive_id, stream_url, chave_json, logo_id, video_extra_1, video_extra_2, video_extra_3 } = data;
+
+    if (!id || !video_drive_id || !stream_url || !chave_json) {
+      throw new Error('Faltando dados obrigatórios');
+    }
 
     const keyFilePath = path.join(process.cwd(), 'chave_temp.json');
     fs.writeFileSync(keyFilePath, chave_json);
 
-    const videoPath = path.join(process.cwd(), `${id}.mp4`);
-    const logoPath = path.join(process.cwd(), 'logo.png');
-    const part1 = path.join(process.cwd(), 'part1.mp4');
-    const part2 = path.join(process.cwd(), 'part2.mp4');
-    const concatList = path.join(process.cwd(), 'concat_list.txt');
+    const videoFile = `${id}.mp4`;
+    await baixarArquivo(video_drive_id, videoFile, keyFilePath);
 
+    // Baixar vídeos extras
+    const extraIds = [video_extra_1, video_extra_2, video_extra_3].filter(Boolean);
     const extras = [];
-    if (video_extra_1) extras.push(['extra1.mp4', video_extra_1]);
-    if (video_extra_2) extras.push(['extra2.mp4', video_extra_2]);
-    if (video_extra_3) extras.push(['extra3.mp4', video_extra_3]);
-
-    // Baixar principal e logo
-    await baixarArquivo(video_drive_id, videoPath, keyFilePath);
-    if (logo_id) await baixarArquivo(logo_id, logoPath, keyFilePath);
-
-    for (const [filename, driveId] of extras) {
-      await baixarArquivo(driveId, path.join(process.cwd(), filename), keyFilePath);
+    for (let i = 0; i < extraIds.length; i++) {
+      const nome = `extra${i + 1}.mp4`;
+      await baixarArquivo(extraIds[i], nome, keyFilePath);
+      extras.push(nome);
     }
 
-    const duracao = obterDuracao(videoPath);
-    if (!duracao) throw new Error("Erro na duraÃ§Ã£o do vÃ­deo");
-
-    const metade = duracao / 2;
-    execSync(`ffmpeg -y -i "${videoPath}" -t ${metade} -vf "scale=1280:720" part1.mp4`);
-    execSync(`ffmpeg -y -i "${videoPath}" -ss ${metade} -vf "scale=1280:720" part2.mp4`);
-
-    for (const [filename] of extras) {
-      execSync(`ffmpeg -y -i "${filename}" -vf "scale=1280:720" "${filename}"`);
+    // Baixar logo
+    const logoPath = 'logo.png';
+    if (logo_id) {
+      await baixarArquivo(logo_id, logoPath, keyFilePath);
     }
 
-    const list = ['part1.mp4', ...extras.map(([f]) => f), 'part2.mp4']
-      .map(f => `file '${f}'`)
-      .join('\n');
-    fs.writeFileSync(concatList, list);
+    // Dividir vídeo principal
+    const parte1 = 'parte1.mp4', parte2 = 'parte2.mp4';
+    await dividirVideoEmDuasPartes(videoFile, parte1, parte2);
 
-    // Notifica inÃ­cio
-    await enviarStatusPuppeteer({ id, status: 'started' });
+    // Unir tudo com logo
+    const saidaFinal = `final_${id}.mp4`;
+    await montarVideoFinal([parte1, ...extras, parte2], logoPath, saidaFinal);
 
-    const overlayFilter = "[1]format=rgba,rotate=PI/1.5*t:enable='mod(t\,3)',scale=80:-1[logo];[0][logo]overlay=W-w-20:20";
-
-    const args = [
-      '-f', 'concat', '-safe', '0', '-i', 'concat_list.txt',
-      '-stream_loop', '-1', '-i', 'logo.png',
-      '-filter_complex', overlayFilter,
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
-      '-c:a', 'aac', '-ar', '44100',
-      '-f', 'flv', stream_url
-    ];
-
-    const ffmpeg = spawn('ffmpeg', args);
-    ffmpeg.stdout.on('data', data => process.stdout.write(data));
-    ffmpeg.stderr.on('data', data => process.stderr.write(data));
-
-    ffmpeg.on('close', async code => {
-      if (code === 0) {
-        console.log("âœ… Live finalizada");
-        await enviarStatusPuppeteer({ id, status: 'finished' });
-      } else {
-        console.error("âŒ ffmpeg falhou:", code);
-        await enviarStatusPuppeteer({ id, status: 'error', message: 'ffmpeg falhou: ' + code });
-      }
-
-      [videoPath, part1, part2, concatList, keyFilePath, logoPath, ...extras.map(([f]) => path.join(process.cwd(), f))]
-        .forEach(f => { if (fs.existsSync(f)) fs.unlinkSync(f); });
-
-      process.exit(code === 0 ? 0 : 1);
+    // Limpar temporários
+    [videoFile, ...extras, parte1, parte2, logoPath].forEach(f => {
+      try { fs.unlinkSync(f); } catch (_) {}
     });
 
+    // Transmitir
+    await rodarFFmpeg(saidaFinal, stream_url);
+    fs.unlinkSync(saidaFinal);
+    fs.unlinkSync(keyFilePath);
+
   } catch (err) {
-    console.error("ðŸ’¥ Erro:", err.message);
+    console.error('💥 Erro fatal:', err.message);
     process.exit(1);
   }
 }
