@@ -63,18 +63,22 @@ jobs:
       - name: 🛠️ Instalar ffmpeg
         run: sudo apt update && sudo apt install -y ffmpeg
 
-      - name: 📄 Criar input.json
+      - name: 📄 Criar input.json (usando jq com segurança)
         run: |
-          echo "{
-            \"id\": \"${{ github.event.inputs.id }}\",
-            \"video_drive_id\": \"${{ github.event.inputs.video_drive_id }}\",
-            \"stream_url\": \"${{ github.event.inputs.stream_url }}\",
-            \"chave_json\": ${{ toJson(github.event.inputs.chave_json) }},
-            \"logo_id\": \"${{ github.event.inputs.logo_id || '' }}\",
-            \"video_extra_1\": \"${{ github.event.inputs.video_extra_1 || '' }}\",
-            \"video_extra_2\": \"${{ github.event.inputs.video_extra_2 || '' }}\",
-            \"video_extra_3\": \"${{ github.event.inputs.video_extra_3 || '' }}\"
-          }" > input.json
+          echo '{}' > input.json
+          jq \
+            --arg id "${{ github.event.inputs.id }}" \
+            --arg video_drive_id "${{ github.event.inputs.video_drive_id }}" \
+            --arg stream_url "${{ github.event.inputs.stream_url }}" \
+            --argjson chave_json '${{ github.event.inputs.chave_json }}' \
+            --arg logo_id "${{ github.event.inputs.logo_id || '' }}" \
+            --arg video_extra_1 "${{ github.event.inputs.video_extra_1 || '' }}" \
+            --arg video_extra_2 "${{ github.event.inputs.video_extra_2 || '' }}" \
+            --arg video_extra_3 "${{ github.event.inputs.video_extra_3 || '' }}" \
+            '.id=$id | .video_drive_id=$video_drive_id | .stream_url=$stream_url |
+             .chave_json=$chave_json | .logo_id=$logo_id |
+             .video_extra_1=$video_extra_1 | .video_extra_2=$video_extra_2 | .video_extra_3=$video_extra_3' \
+            input.json > final.json && mv final.json input.json
 
       - name: 🧾 Mostrar conteúdo do input.json
         run: cat input.json
@@ -82,7 +86,7 @@ jobs:
       - name: ▶️ Executar live.js
         run: node live.js input.json
 
-      - name: 📤 Upload do vídeo original (para depuração)
+      - name: 📤 Upload do vídeo final (para depuração)
         if: always()
         uses: actions/upload-artifact@v4
         with:
