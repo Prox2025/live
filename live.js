@@ -4,7 +4,6 @@ const { spawn } = require('child_process');
 const { google } = require('googleapis');
 const puppeteer = require('puppeteer');
 const ffmpeg = require('fluent-ffmpeg');
-const os = require('os');
 
 const SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
 const SERVER_STATUS_URL = 'https://livestream.ct.ws/Google%20drive/live/status.php';
@@ -108,7 +107,7 @@ function obterDuracaoVideo(input) {
 function concatenarVideos(videos, output) {
   return new Promise((resolve, reject) => {
     const txtList = 'concat_list.txt';
-    const listContent = videos.map(f => `file '${f}'`).join('\n');
+    const listContent = videos.map(f => `file '${path.resolve(f)}'`).join('\n');
     fs.writeFileSync(txtList, listContent);
 
     ffmpeg()
@@ -196,7 +195,7 @@ async function main() {
     const { id, video_drive_id, stream_url, chave_json, logo_id, video_extra_1, video_extra_2, video_extra_3 } = data;
 
     const keyFilePath = path.join(process.cwd(), 'chave_temp.json');
-    fs.writeFileSync(keyFilePath, chave_json);
+    fs.writeFileSync(keyFilePath, JSON.stringify(chave_json)); // ✅ CORRIGIDO
 
     const base = process.cwd();
     const videoPrincipal = path.join(base, `${id}_principal.mp4`);
@@ -212,19 +211,25 @@ async function main() {
 
     const extras = [];
     if (video_extra_1) {
-      const f = `${id}_extra_1.mp4`; await baixarArquivo(video_extra_1, f, keyFilePath); extras.push(f);
+      const f = path.join(base, `${id}_extra_1.mp4`);
+      await baixarArquivo(video_extra_1, f, keyFilePath);
+      extras.push(f);
     }
     if (video_extra_2) {
-      const f = `${id}_extra_2.mp4`; await baixarArquivo(video_extra_2, f, keyFilePath); extras.push(f);
+      const f = path.join(base, `${id}_extra_2.mp4`);
+      await baixarArquivo(video_extra_2, f, keyFilePath);
+      extras.push(f);
     }
     if (video_extra_3) {
-      const f = `${id}_extra_3.mp4`; await baixarArquivo(video_extra_3, f, keyFilePath); extras.push(f);
+      const f = path.join(base, `${id}_extra_3.mp4`);
+      await baixarArquivo(video_extra_3, f, keyFilePath);
+      extras.push(f);
     }
 
     const logoPath = logo_id ? path.join(base, `${id}_logo.png`) : null;
     if (logo_id) await baixarArquivo(logo_id, logoPath, keyFilePath);
 
-    const finalVideo = `${id}_concat.mp4`;
+    const finalVideo = path.join(base, `${id}_concat.mp4`);
     const todos = [parte1, ...extras, parte2];
     await concatenarVideos(todos, finalVideo);
 
