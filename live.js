@@ -1,11 +1,11 @@
 const fs = require('fs');
 const path = require('path');
-const { spawn, exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const { google } = require('googleapis');
 const puppeteer = require('puppeteer');
 const util = require('util');
-
 const execPromise = util.promisify(exec);
+
 const SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
 const SERVER_STATUS_URL = 'https://livestream.ct.ws/Google%20drive/live/status.php';
 
@@ -27,31 +27,30 @@ async function baixarArquivo(fileId, dest, keyFilePath) {
   });
 }
 
-async function obterDuracao(videoPath) {
-  const { stdout } = await execPromise(`ffprobe -v error -show_entries format=duration -of csv=p=0 "${videoPath}"`);
-  return parseFloat(stdout.trim());
-}
-
-async function dividirVideo(videoPath, duracao) {
-  const metade = duracao / 2;
-  await execPromise(`ffmpeg -y -i "${videoPath}" -t ${metade} -c copy parte1.mp4`);
-  await execPromise(`ffmpeg -y -i "${videoPath}" -ss ${metade} -c copy parte2.mp4`);
-}
-
-function criarListaConcat(videos, listaPath) {
-  const conteudo = videos.map(v => `file '${v}'`).join('\n');
+async function criarArquivoListaConcat(videos, listaPath) {
+  const conteudo = videos.map(f => `file '${f}'`).join('\n');
   fs.writeFileSync(listaPath, conteudo);
 }
 
-async function unirVideosComLogo(listaPath, logoPath, output) {
-  const filtroLogo = `[1:v]format=rgba,scale=iw/8:-1,rotate=PI/60*t:c=none:ow=rotw(iw):oh=roth(ih)[logo];
+async function unirVideos(listaConcat, output) {
+  try {
+    await execPromise(`ffmpeg -y -f concat -safe 0 -i "${listaConcat}" -c copy "${output}"`);
+  } catch (e) {
+    throw new Error('Erro ao unir vídeos: ' + e.message);
+  }
+}
+
+async function adicionarLogoRotativo(videoInput, logoPath, output) {
+  // O logo será redimensionado (escala) e girado (rotate) continuamente a cada 3s.
+  const filtroLogo = `[1:v]format=rgba,scale=iw/8:-1,rotate=2*PI*t/3:c=none:ow=rotw(iw):oh=roth(ih)[logo];
     [0:v][logo]overlay=W-w-10:10:shortest=1`;
-  const comando = `ffmpeg -y -f concat -safe 0 -i ${listaPath} -i ${logoPath} \
--filter_complex "${filtroLogo}" \
--c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
--c:a aac -b:a 192k -ar 44100 -movflags +faststart \
-${output}`;
-  await execPromise(comando);
+
+  const cmd = `ffmpeg -y -i "${videoInput}" -i "${logoPath}" -filter_complex "${filtroLogo}" -c:a copy -c:v libx264 -preset veryfast -crf 23 "${output}"`;
+  try {
+    await execPromise(cmd);
+  } catch (e) {
+    throw new Error('Erro ao adicionar logo: ' + e.message);
+  }
 }
 
 async function enviarStatus(data) {
@@ -114,51 +113,66 @@ async function main() {
   try {
     const input = JSON.parse(fs.readFileSync(process.argv[2], 'utf-8'));
     const { id, video_drive_id, stream_url, chave_json, logo_id, video_extra_1, video_extra_2, video_extra_3 } = input;
+
+    // Salva chave temporária
     const keyPath = path.join(process.cwd(), 'chave_temp.json');
     fs.writeFileSync(keyPath, chave_json);
 
+    // Baixa vídeo principal
+    const mainVideo = `${id}.mp4`;
     console.log(`📥 Baixando vídeo principal (${video_drive_id})`);
-    await baixarArquivo(video_drive_id, `${id}.mp4`, keyPath);
+    await baixarArquivo(video_drive_id, mainVideo, keyPath);
 
+    // Baixa vídeos extras
     const extras = [];
     for (const [i, extraId] of [video_extra_1, video_extra_2, video_extra_3].entries()) {
       if (extraId) {
-        const name = `extra${i + 1}.mp4`;
-        console.log(`📥 Baixando vídeo extra: ${name}`);
-        await baixarArquivo(extraId, name, keyPath);
-        extras.push(name);
+        const extraName = `extra${i+1}.mp4`;
+        console.log(`📥 Baixando vídeo extra: ${extraName}`);
+        await baixarArquivo(extraId, extraName, keyPath);
+        extras.push(extraName);
       }
     }
 
-    let logoPath = 'logo.png';
+    // Cria lista de concatenação: vídeo principal + extras
+    const listaVideos = [mainVideo, ...extras];
+    const listaPath = 'lista.txt';
+    await criarArquivoListaConcat(listaVideos, listaPath);
+
+    // Une vídeos em um só
+    const videoUnido = 'video_unido.mp4';
+    console.log('🔗 Unindo vídeos...');
+    await unirVideos(listaPath, videoUnido);
+
+    // Baixa logo e adiciona ao vídeo unido, se tiver logo
+    let videoFinal = videoUnido;
     if (logo_id) {
+      const logoPath = 'logo.png';
       console.log('🖼️ Baixando logo');
       await baixarArquivo(logo_id, logoPath, keyPath);
+      const videoComLogo = 'video_com_logo.mp4';
+      console.log('✨ Adicionando logo giratório...');
+      await adicionarLogoRotativo(videoUnido, logoPath, videoComLogo);
+      videoFinal = videoComLogo;
     }
 
-    console.log('⏱️ Obtendo duração do vídeo...');
-    const duracao = await obterDuracao(`${id}.mp4`);
-    console.log(`⏳ Duração total: ${duracao.toFixed(2)} segundos`);
-
-    console.log('✂️ Dividindo vídeo principal');
-    await dividirVideo(`${id}.mp4`, duracao);
-
-    const lista = ['parte1.mp4', ...extras, 'parte2.mp4'];
-    criarListaConcat(lista, 'lista.txt');
-
-    console.log('🎞️ Unindo vídeos e aplicando logo');
-    await unirVideosComLogo('lista.txt', logoPath, 'final.mp4');
-
-    const stats = fs.statSync('final.mp4');
+    // Mostra tamanho do vídeo final
+    const stats = fs.statSync(videoFinal);
     const tamanhoMB = (stats.size / 1024 / 1024).toFixed(2);
-    console.log(`📁 Vídeo final criado: ${tamanhoMB} MB`);
+    console.log(`📁 Vídeo final pronto: ${videoFinal} (${tamanhoMB} MB)`);
 
-    console.log('📡 Pronto para transmissão');
-    await transmitirVideo('final.mp4', stream_url, id);
+    // Só inicia a transmissão se o arquivo final existe e tem tamanho válido
+    if (tamanhoMB > 1) {
+      console.log('▶️ Iniciando transmissão com vídeo final...');
+      await transmitirVideo(videoFinal, stream_url, id);
+    } else {
+      throw new Error('Vídeo final muito pequeno ou não criado corretamente');
+    }
 
     fs.unlinkSync(keyPath);
+
   } catch (e) {
-    console.error('💥 Erro:', e.message);
+    console.error('💥 Erro fatal:', e.message);
     process.exit(1);
   }
 }
