@@ -4,19 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       id:
-        description: 'Nome do vídeo (ex: a2c438366d)'
+        description: 'Nome base do vídeo (ex: a2c438366d)'
         required: true
       video_drive_id:
-        description: 'ID real do vídeo no Google Drive'
+        description: 'ID do vídeo principal no Google Drive'
         required: true
       stream_url:
-        description: 'URL do stream (RTMP, ex: Facebook Live)'
+        description: 'URL do stream (RTMP)'
         required: true
       chave_json:
-        description: 'Conteúdo do arquivo chave.json para autenticação Google Drive'
+        description: 'Conteúdo do chave.json (Google API)'
         required: true
       logo_id:
-        description: 'ID da imagem logo.png no Google Drive'
+        description: 'ID do logo.png no Google Drive'
         required: false
       video_extra_1:
         description: 'ID do vídeo extra 1'
@@ -43,9 +43,7 @@ jobs:
             "version": "1.0.0",
             "dependencies": {
               "puppeteer": "^21.3.8",
-              "googleapis": "^118.0.0",
-              "fluent-ffmpeg": "^2.1.2",
-              "get-video-duration": "^4.0.0"
+              "googleapis": "^118.0.0"
             }
           }' > package.json
 
@@ -63,32 +61,28 @@ jobs:
       - name: 🛠️ Instalar ffmpeg
         run: sudo apt update && sudo apt install -y ffmpeg
 
-      - name: 📄 Criar input.json (usando jq com segurança)
+      - name: 📄 Criar input.json com dados completos
         run: |
-          echo '{}' > input.json
-          jq \
-            --arg id "${{ github.event.inputs.id }}" \
-            --arg video_drive_id "${{ github.event.inputs.video_drive_id }}" \
-            --arg stream_url "${{ github.event.inputs.stream_url }}" \
-            --argjson chave_json '${{ github.event.inputs.chave_json }}' \
-            --arg logo_id "${{ github.event.inputs.logo_id || '' }}" \
-            --arg video_extra_1 "${{ github.event.inputs.video_extra_1 || '' }}" \
-            --arg video_extra_2 "${{ github.event.inputs.video_extra_2 || '' }}" \
-            --arg video_extra_3 "${{ github.event.inputs.video_extra_3 || '' }}" \
-            '.id=$id | .video_drive_id=$video_drive_id | .stream_url=$stream_url |
-             .chave_json=$chave_json | .logo_id=$logo_id |
-             .video_extra_1=$video_extra_1 | .video_extra_2=$video_extra_2 | .video_extra_3=$video_extra_3' \
-            input.json > final.json && mv final.json input.json
+          echo '{
+            "id": "${{ github.event.inputs.id }}",
+            "video_drive_id": "${{ github.event.inputs.video_drive_id }}",
+            "stream_url": "${{ github.event.inputs.stream_url }}",
+            "chave_json": ${{ toJson(github.event.inputs.chave_json) }},
+            "logo_id": "${{ github.event.inputs.logo_id }}",
+            "video_extra_1": "${{ github.event.inputs.video_extra_1 }}",
+            "video_extra_2": "${{ github.event.inputs.video_extra_2 }}",
+            "video_extra_3": "${{ github.event.inputs.video_extra_3 }}"
+          }' > input.json
 
       - name: 🧾 Mostrar conteúdo do input.json
         run: cat input.json
 
-      - name: ▶️ Executar live.js
+      - name: ▶️ Executar live.js com input.json
         run: node live.js input.json
 
-      - name: 📤 Upload do vídeo final (para depuração)
+      - name: 📤 Enviar vídeo para debug
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: video-${{ github.event.inputs.id }}
-          path: final_${{ github.event.inputs.id }}.mp4
+          path: ${{ github.event.inputs.id }}.mp4
