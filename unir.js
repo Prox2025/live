@@ -2,19 +2,12 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const { google } = require('googleapis');
 
-process.on('unhandledRejection', err => {
-  console.error('💥 UNHANDLED PROMISE REJECTION:', err);
-  process.exit(1);
-});
-
 const keyFile = process.env.KEYFILE || 'chave.json';
 const inputFile = process.env.INPUTFILE || 'input.json';
 const SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
 
-// Executa comando FFmpeg
 function executarFFmpeg(args) {
   return new Promise((resolve, reject) => {
-    console.log('🔧 Executando ffmpeg:', ['ffmpeg', ...args].join(' '));
     const proc = spawn('ffmpeg', args, { stdio: 'inherit' });
     proc.on('close', code => {
       if (code === 0) resolve();
@@ -23,32 +16,23 @@ function executarFFmpeg(args) {
   });
 }
 
-// Autenticação Google Drive
 async function autenticar() {
   const auth = new google.auth.GoogleAuth({ keyFile, scopes: SCOPES });
   return await auth.getClient();
 }
 
-// Baixa arquivo do Google Drive
 async function baixarArquivo(fileId, destino, auth) {
   const drive = google.drive({ version: 'v3', auth });
-  console.log(`⬇️ Baixando arquivo ID ${fileId} para ${destino}`);
   const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
 
   return new Promise((resolve, reject) => {
     const output = fs.createWriteStream(destino);
-    let tamanho = 0;
-    res.data.on('data', chunk => tamanho += chunk.length);
     res.data.pipe(output);
-    output.on('finish', () => {
-      console.log(`✅ Download concluído (${(tamanho / 1024 / 1024).toFixed(2)} MB)`);
-      resolve();
-    });
-    output.on('error', err => reject(err));
+    res.data.on('end', () => resolve());
+    res.data.on('error', err => reject(err));
   });
 }
 
-// Obter duração do vídeo com ffprobe
 function obterDuracao(video) {
   return new Promise((resolve, reject) => {
     const ffprobe = spawn('ffprobe', [
@@ -66,16 +50,12 @@ function obterDuracao(video) {
   });
 }
 
-// Corta vídeo em duas partes
 async function cortarVideo(input, out1, out2, meio) {
-  console.log(`✂️ Cortando vídeo em ${input} ao meio (${meio} s)`);
   await executarFFmpeg(['-i', input, '-t', meio.toString(), '-c', 'copy', out1]);
   await executarFFmpeg(['-i', input, '-ss', meio.toString(), '-c', 'copy', out2]);
 }
 
-// Reencoda vídeo para 1280x720, 30fps
 async function reencode(input, output) {
-  console.log(`⚙️ Reencodando vídeo ${input} → ${output}`);
   await executarFFmpeg([
     '-i', input,
     '-vf', 'scale=1280:720,fps=30',
@@ -87,9 +67,7 @@ async function reencode(input, output) {
   ]);
 }
 
-// Junta vídeos da lista
 async function unirVideos(lista, saida) {
-  console.log(`🎬 Unindo vídeos: ${lista.join(', ')}`);
   const txt = 'list.txt';
   fs.writeFileSync(txt, lista.map(f => `file '${f}'`).join('\n'));
   await executarFFmpeg(['-f', 'concat', '-safe', '0', '-i', txt, '-c', 'copy', saida]);
@@ -97,53 +75,69 @@ async function unirVideos(lista, saida) {
 
 (async () => {
   try {
-    console.log('✅ Iniciando unir.js');
-    if (!fs.existsSync(inputFile)) {
-      throw new Error(`Arquivo de entrada não encontrado: ${inputFile}`);
-    }
-
+    console.log('🔑 Autenticando...');
     const auth = await autenticar();
+
     const dados = JSON.parse(fs.readFileSync(inputFile));
-
     const videoPrincipal = dados.video_principal;
-    const extras = dados.videos_opcionais || [];
-    const id = dados.id || 'video_unido';
+    const extras = dados.videos_opcionais?.filter(Boolean) || [];
+    const logoId = dados.logo_id || '';
+    const streamUrl = dados.stream_url || '';
+    const liveId = dados.id || '';
 
-    // Baixar vídeo principal
+    console.log('⬇️ Baixando vídeo principal...');
     await baixarArquivo(videoPrincipal, 'principal.mp4', auth);
 
+    console.log('⌛ Obtendo duração do vídeo principal...');
     const duracao = await obterDuracao('principal.mp4');
     const meio = duracao / 2;
 
-    // Cortar e reencodar partes
+    console.log('✂️ Cortando vídeo principal...');
     await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
+
+    console.log('⚙️ Reencodando partes principais...');
     await reencode('parte1_raw.mp4', 'parte1.mp4');
     await reencode('parte2_raw.mp4', 'parte2.mp4');
 
-    // Processar vídeos extras
     const intermediarios = [];
     for (let i = 0; i < extras.length; i++) {
-      const vid = extras[i];
+      const id = extras[i];
       const raw = `extra${i}_raw.mp4`;
       const out = `extra${i}.mp4`;
 
-      await baixarArquivo(vid, raw, auth);
+      console.log(`⬇️ Baixando vídeo extra ${i + 1}: ${id}`);
+      await baixarArquivo(id, raw, auth);
+
+      console.log(`⚙️ Reencodando vídeo extra ${i + 1}...`);
       await reencode(raw, out);
       intermediarios.push(out);
     }
 
     const ordemFinal = ['parte1.mp4', ...intermediarios, 'parte2.mp4'];
+
+    console.log('🎬 Unindo vídeos finais...');
     await unirVideos(ordemFinal, 'video_unido.mp4');
 
-    // Remove arquivos intermediários para limpeza
-    const arquivosRemover = ['principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', ...intermediarios.map(f => f.replace('.mp4', '_raw.mp4')), ...intermediarios];
-    arquivosRemover.forEach(f => {
-      if (fs.existsSync(f)) fs.unlinkSync(f);
-    });
+    const sizeMB = (fs.statSync('video_unido.mp4').size / 1024 / 1024).toFixed(2);
+    console.log(`✅ Vídeo final criado: video_unido.mp4 (${sizeMB} MB)`);
 
-    console.log('✅ Vídeo unido criado com sucesso: video_unido.mp4');
+    // 🔻 Baixar logo se existir
+    if (logoId) {
+      console.log('⬇️ Baixando logo...');
+      await baixarArquivo(logoId, 'logo.png', auth);
+      console.log('✅ Logo baixado com sucesso.');
+    }
+
+    // 🧾 Salvar informações para o live.js
+    const streamInfo = {
+      stream_url: streamUrl,
+      video_id: liveId
+    };
+    fs.writeFileSync('stream_info.json', JSON.stringify(streamInfo, null, 2));
+    console.log('📝 stream_info.json salvo com sucesso.');
+
   } catch (err) {
-    console.error('❌ Erro em unir.js:', err);
+    console.error('❌ Erro:', err);
     process.exit(1);
   }
 })();
