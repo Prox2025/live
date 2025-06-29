@@ -1,88 +1,142 @@
-name: Iniciar Live com Cache e Criação Automática do package.json
+name: Montar vídeo do Google Drive e iniciar Live
 
 on:
   workflow_dispatch:
     inputs:
       id:
-        description: 'Nome base do vídeo (ex: a2c438366d)'
+        description: 'ID do evento / live'
         required: true
+        type: string
       video_drive_id:
         description: 'ID do vídeo principal no Google Drive'
         required: true
-      stream_url:
-        description: 'URL do stream (RTMP)'
-        required: true
+        type: string
       chave_json:
-        description: 'Conteúdo do chave.json (Google API)'
+        description: 'Chave JSON completa em texto (string)'
         required: true
+        type: string
       logo_id:
-        description: 'ID do logo.png no Google Drive'
+        description: 'ID do arquivo logo (opcional)'
         required: false
+        type: string
       video_extra_1:
-        description: 'ID do vídeo extra 1'
+        description: 'ID do vídeo extra 1 (opcional)'
         required: false
+        type: string
       video_extra_2:
-        description: 'ID do vídeo extra 2'
+        description: 'ID do vídeo extra 2 (opcional)'
         required: false
+        type: string
       video_extra_3:
-        description: 'ID do vídeo extra 3'
+        description: 'ID do vídeo extra 3 (opcional)'
         required: false
+        type: string
+      stream_url:
+        description: 'URL da stream do Facebook para iniciar a live'
+        required: true
+        type: string
 
 jobs:
-  run-live:
+  montar-e-live:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Clonar repositório
+      - name: 🔽 Clonar repositório
         uses: actions/checkout@v4
 
-      - name: ⚙️ Criar package.json automaticamente
+      - name: 🔐 Salvar chave.json
+        run: echo '${{ github.event.inputs.chave_json }}' > chave.json
+
+      - name: 🧾 Criar input.json
         run: |
-          echo '{
-            "name": "live-stream",
-            "version": "1.0.0",
-            "dependencies": {
-              "puppeteer": "^21.3.8",
-              "googleapis": "^118.0.0"
+          videos_opcionais='[]'
+          if [ -n "${{ github.event.inputs.video_extra_1 }}" ]; then
+            videos_opcionais="[\"${{ github.event.inputs.video_extra_1 }}\"]"
+          fi
+          if [ -n "${{ github.event.inputs.video_extra_2 }}" ]; then
+            if [ "$videos_opcionais" = "[]" ]; then
+              videos_opcionais="[\"${{ github.event.inputs.video_extra_2 }}\"]"
+            else
+              videos_opcionais=$(echo $videos_opcionais | sed 's/]$/, \"${{ github.event.inputs.video_extra_2 }}\"]/')
+            fi
+          fi
+          if [ -n "${{ github.event.inputs.video_extra_3 }}" ]; then
+            if [ "$videos_opcionais" = "[]" ]; then
+              videos_opcionais="[\"${{ github.event.inputs.video_extra_3 }}\"]"
+            else
+              videos_opcionais=$(echo $videos_opcionais | sed 's/]$/, \"${{ github.event.inputs.video_extra_3 }}\"]/')
+            fi
+          fi
+          cat << EOF > input.json
+{
+  "id": "${{ github.event.inputs.id }}",
+  "video_principal": "${{ github.event.inputs.video_drive_id }}",
+  "logo_id": "${{ github.event.inputs.logo_id }}",
+  "videos_opcionais": $videos_opcionais,
+  "stream_url": "${{ github.event.inputs.stream_url }}"
+}
+EOF
+
+      - name: ⚙️ Instalar dependências
+        run: |
+          sudo apt update
+          sudo apt install -y ffmpeg nodejs npm
+
+      - name: 📦 Criar package.json automaticamente
+        run: |
+          cat << 'EOF' > package.json
+{
+  "name": "live-stream-gdrive",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "googleapis": "^105.0.0",
+    "puppeteer": "^21.3.8"
+  }
+}
+EOF
+          npm install
+
+      - name: 🧠 Executar unir.js
+        run: node unir.js
+        env:
+          KEYFILE: chave.json
+          INPUTFILE: input.json
+
+      - name: ⬇️ Baixar logo (se fornecido)
+        if: ${{ github.event.inputs.logo_id != '' }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const { google } = require('googleapis');
+            const keyFile = 'chave.json';
+            async function baixar() {
+              const auth = new (require('googleapis').google.auth.GoogleAuth)({keyFile, scopes: ['https://www.googleapis.com/auth/drive.readonly']});
+              const client = await auth.getClient();
+              const drive = google.drive({version: 'v3', auth: client});
+              const dest = fs.createWriteStream('logo.png');
+              const res = await drive.files.get({fileId: '${{ github.event.inputs.logo_id }}', alt: 'media'}, {responseType: 'stream'});
+              res.data.pipe(dest);
+              await new Promise(resolve => dest.on('finish', resolve));
+              console.log('Logo baixado');
             }
-          }' > package.json
+            baixar().catch(e => {console.error(e); process.exit(1);});
+          "
 
-      - name: 📦 Cache do npm
-        uses: actions/cache@v3
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-npm-cache-${{ hashFiles('package.json') }}
-          restore-keys: |
-            ${{ runner.os }}-npm-cache-
-
-      - name: 📥 Instalar dependências
-        run: npm install
-
-      - name: 🛠️ Instalar ffmpeg
-        run: sudo apt update && sudo apt install -y ffmpeg
-
-      - name: 📄 Criar input.json com dados completos
+      - name: 📂 Salvar stream_info.json
         run: |
-          echo '{
-            "id": "${{ github.event.inputs.id }}",
-            "video_drive_id": "${{ github.event.inputs.video_drive_id }}",
-            "stream_url": "${{ github.event.inputs.stream_url }}",
-            "chave_json": ${{ toJson(github.event.inputs.chave_json) }},
-            "logo_id": "${{ github.event.inputs.logo_id }}",
-            "video_extra_1": "${{ github.event.inputs.video_extra_1 }}",
-            "video_extra_2": "${{ github.event.inputs.video_extra_2 }}",
-            "video_extra_3": "${{ github.event.inputs.video_extra_3 }}"
-          }' > input.json
+          echo "{\"stream_url\":\"${{ github.event.inputs.stream_url }}\",\"video_id\":\"${{ github.event.inputs.id }}\"}" > stream_info.json
 
-      - name: 🧾 Mostrar conteúdo do input.json
-        run: cat input.json
-
-      - name: ▶️ Executar live.js com input.json
-        run: node live.js input.json
-
-      - name: 📤 Enviar vídeo para debug
-        if: always()
+      - name: 📤 Upload artifacts (vídeo, logo, dados da stream)
         uses: actions/upload-artifact@v4
         with:
-          name: video-${{ github.event.inputs.id }}
-          path: ${{ github.event.inputs.id }}.mp4
+          name: live-artifacts
+          path: |
+            video_unido.mp4
+            stream_info.json
+            logo.png
+
+      - name: 🧠 Iniciar Live com live.js
+        run: node live.js
+        env:
+          KEYFILE: chave.json
