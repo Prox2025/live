@@ -3,21 +3,9 @@ const path = require('path');
 const { spawn } = require('child_process');
 const puppeteer = require('puppeteer');
 
-// URL status servidor
 const SERVER_STATUS_URL = 'https://livestream.ct.ws/Google%20drive/live/status.php';
 
-// Captura erros não tratados para log e saída clara
-process.on('uncaughtException', (err) => {
-  console.error('🛑 Uncaught Exception:', err);
-  process.exit(1);
-});
-process.on('unhandledRejection', (reason) => {
-  console.error('🛑 Unhandled Rejection:', reason);
-  process.exit(1);
-});
-
 async function enviarStatusPuppeteer(data) {
-  console.log('Iniciando Puppeteer para enviar status...');
   const browser = await puppeteer.launch({
     headless: 'new',
     args: ['--no-sandbox', '--disable-setuid-sandbox']
@@ -27,13 +15,13 @@ async function enviarStatusPuppeteer(data) {
     const page = await browser.newPage();
     await page.emulateTimezone('Africa/Maputo');
 
-    console.log(`Acessando URL de status: ${SERVER_STATUS_URL}`);
+    console.log(`🌐 Acessando ${SERVER_STATUS_URL}`);
     await page.goto(SERVER_STATUS_URL, {
       waitUntil: 'networkidle2',
       timeout: 60000
     });
 
-    await new Promise(r => setTimeout(r, 3000));
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
     const resposta = await page.evaluate(async (payload) => {
       try {
@@ -49,11 +37,11 @@ async function enviarStatusPuppeteer(data) {
       }
     }, data);
 
-    console.log('Resposta do servidor:', resposta);
+    console.log("📡 Resposta do servidor:", resposta);
     await browser.close();
     return resposta;
   } catch (err) {
-    console.error('Erro ao enviar status:', err);
+    console.error("❌ Erro ao enviar status:", err.message);
     await browser.close();
     throw err;
   }
@@ -61,20 +49,27 @@ async function enviarStatusPuppeteer(data) {
 
 async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
   return new Promise((resolve, reject) => {
-    const temLogo = logoPath && fs.existsSync(logoPath);
+    const ffmpegArgs = ['-re', '-i', videoPath];
 
-    let filtroLogo = '';
-    if (temLogo) {
-      filtroLogo = `[1:v]format=rgba,rotate=2*PI*t/3:c=none:ow=rotw(2*PI*t/3):oh=roth(2*PI*t/3)[logo];` +
-                   `[0:v][logo]overlay=W-w-10:10:shortest=1`;
+    let filtroLogo = 'null'; // filtro padrão se não houver logo
+
+    if (logoPath && fs.existsSync(logoPath)) {
+      ffmpegArgs.push('-loop', '1', '-i', logoPath);
+
+      // Filtro complexo com nitidez (unsharp) + logo com escala, rotação e overlay no canto superior direito
+      filtroLogo =
+        `[0:v]unsharp=5:5:1.0:5:5:0.0[video_nitido];` + 
+        `[1:v]scale=iw/6:ih/6,format=rgba,rotate=PI*t/3:c=none:ow=rotw(iw):oh=roth(ih)[logo];` +
+        `[video_nitido][logo]overlay=W-w-10:10:shortest=1`;
+    } else {
+      // Se não houver logo, aplica nitidez só no vídeo
+      filtroLogo = `[0:v]unsharp=5:5:1.0:5:5:0.0[video_nitido];[video_nitido]null`;
     }
 
-    const args = ['-re', '-i', videoPath];
-    if (temLogo) {
-      args.push('-loop', '1', '-i', logoPath);
-      args.push('-filter_complex', filtroLogo);
-    }
-    args.push(
+    ffmpegArgs.push(
+      '-filter_complex', filtroLogo,
+      '-map', '[video_nitido]',
+      '-map', '0:a?', // mapear áudio se existir
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '18',
@@ -89,8 +84,7 @@ async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
       streamUrl
     );
 
-    console.log('Executando ffmpeg com args:', args.join(' '));
-    const ffmpeg = spawn('ffmpeg', args);
+    const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
     ffmpeg.stdout.on('data', data => process.stdout.write(data));
     ffmpeg.stderr.on('data', data => process.stderr.write(data));
@@ -98,32 +92,31 @@ async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
     let notificado = false;
     const timer = setTimeout(async () => {
       if (!notificado) {
-        console.log('Notificando início da live...');
+        console.log('🔔 Notificando início da live...');
         try {
           await enviarStatusPuppeteer({ id, status: 'started' });
           notificado = true;
-          console.log('Início da live notificado com sucesso');
+          console.log('✅ Início da live notificado');
         } catch (e) {
-          console.error('Erro ao notificar início:', e);
+          console.error('⚠️ Erro ao notificar início:', e.message);
         }
       }
     }, 60000);
 
-    ffmpeg.on('close', async (code) => {
+    ffmpeg.on('close', async code => {
       clearTimeout(timer);
-      console.log(`ffmpeg terminou com código: ${code}`);
       if (code === 0) {
-        console.log('Live finalizada com sucesso. Notificando término...');
+        console.log('✅ Live finalizada. Notificando término...');
         try {
           await enviarStatusPuppeteer({ id, status: 'finished' });
         } catch (e) {
-          console.error('Erro ao notificar término:', e);
+          console.error('⚠️ Erro ao notificar término:', e.message);
         }
         resolve();
       } else {
-        console.error(`Erro no ffmpeg (código ${code})`);
+        console.error(`❌ ffmpeg finalizou com erro (código ${code})`);
         try {
-          await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg falhou com código ${code}` });
+          await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg finalizou com código ${code}` });
         } catch (_) {}
         reject(new Error(`ffmpeg erro ${code}`));
       }
@@ -131,7 +124,7 @@ async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
 
     ffmpeg.on('error', async err => {
       clearTimeout(timer);
-      console.error('Erro fatal no ffmpeg:', err);
+      console.error('❌ Erro fatal no ffmpeg:', err);
       try {
         await enviarStatusPuppeteer({ id, status: 'error', message: err.message });
       } catch (_) {}
@@ -142,26 +135,22 @@ async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
 
 async function main() {
   try {
-    const cwd = process.cwd();
-    const streamInfoPath = path.join(cwd, 'stream_info.json');
-    const videoPath = path.join(cwd, 'video_unido.mp4');
-    const logoPath = path.join(cwd, 'logo.png');
+    const streamInfoPath = path.join(process.cwd(), 'stream_info.json');
+    const videoPath = path.join(process.cwd(), 'video_unido.mp4');
+    const logoPath = path.join(process.cwd(), 'logo.png');
 
-    console.log('Verificando arquivos necessários...');
-    if (!fs.existsSync(streamInfoPath)) throw new Error('Arquivo stream_info.json não encontrado');
-    if (!fs.existsSync(videoPath)) throw new Error('Arquivo video_unido.mp4 não encontrado');
+    if (!fs.existsSync(streamInfoPath)) throw new Error('stream_info.json não encontrado');
+    if (!fs.existsSync(videoPath)) throw new Error('video_unido.mp4 não encontrado');
 
     const info = JSON.parse(fs.readFileSync(streamInfoPath, 'utf-8'));
     const { stream_url, video_id } = info;
 
-    if (!stream_url) throw new Error('stream_url ausente em stream_info.json');
-    if (!video_id) throw new Error('video_id ausente em stream_info.json');
+    if (!stream_url || !video_id) throw new Error('stream_url ou video_id ausente em stream_info.json');
 
-    console.log(`Iniciando transmissão para stream_url: ${stream_url}`);
-    await rodarFFmpegComLogo(videoPath, logoPath, stream_url, video_id);
-
+    console.log(`🚀 Iniciando transmissão para ${stream_url}`);
+    await rodarFFmpegComLogo(videoPath, fs.existsSync(logoPath) ? logoPath : null, stream_url, video_id);
   } catch (err) {
-    console.error('Erro fatal no main:', err);
+    console.error('💥 Erro fatal:', err.message);
     process.exit(1);
   }
 }
