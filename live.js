@@ -3,7 +3,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const puppeteer = require('puppeteer');
 
-const SERVER_STATUS_URL = 'https://livestream.ct.ws/Google%20drive/live/status.php';
+const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL; // ← vem de secret
 
 async function enviarStatusPuppeteer(data) {
   const browser = await puppeteer.launch({
@@ -15,7 +15,7 @@ async function enviarStatusPuppeteer(data) {
     const page = await browser.newPage();
     await page.emulateTimezone('Africa/Maputo');
 
-    console.log(`🌐 Acessando ${SERVER_STATUS_URL}`);
+    console.log(`🌐 Acessando status API...`);
     await page.goto(SERVER_STATUS_URL, {
       waitUntil: 'networkidle2',
       timeout: 60000
@@ -49,24 +49,16 @@ async function enviarStatusPuppeteer(data) {
 
 async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
   return new Promise((resolve, reject) => {
-    const ffmpegArgs = [
-      '-re',
-      '-i', videoPath
-    ];
+    const filtroLogo = logoPath && fs.existsSync(logoPath)
+      ? `[1:v]format=rgba,rotate=PI*t/1.5:c=none:ow=rotw(iw):oh=roth(ih)[logo];` +
+        `[0:v][logo]overlay=W-w-10:10:shortest=1`
+      : null;
 
-    if (logoPath && fs.existsSync(logoPath)) {
-      // Input da logo com framerate fixo para evitar congelamento
-      ffmpegArgs.push(
-        '-loop', '1',
-        '-framerate', '30',
-        '-i', logoPath,
-        '-filter_complex',
-        '[1:v]format=rgba,fps=30,rotate=PI*t/1.5:c=none:ow=rotw(iw):oh=roth(ih)[logo];' +
-        '[0:v][logo]overlay=W-w-10:10'
-      );
-    } else {
-      // Sem logo, usa vídeo original
-      // Não precisa de filter_complex, só passa o vídeo
+    const ffmpegArgs = ['-re', '-i', videoPath];
+
+    if (filtroLogo) {
+      ffmpegArgs.push('-loop', '1', '-i', logoPath);
+      ffmpegArgs.push('-filter_complex', filtroLogo);
     }
 
     ffmpegArgs.push(
@@ -80,52 +72,46 @@ async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
       '-c:a', 'aac',
       '-b:a', '192k',
       '-ar', '44100',
-      '-shortest',
       '-f', 'flv',
       streamUrl
     );
 
     const ffmpeg = spawn('ffmpeg', ffmpegArgs);
-
     ffmpeg.stdout.on('data', data => process.stdout.write(data));
     ffmpeg.stderr.on('data', data => process.stderr.write(data));
 
     let notificado = false;
     const timer = setTimeout(async () => {
       if (!notificado) {
-        console.log('🔔 Notificando início da live...');
         try {
           await enviarStatusPuppeteer({ id, status: 'started' });
-          notificado = true;
           console.log('✅ Início da live notificado');
         } catch (e) {
-          console.error('⚠️ Erro ao notificar início:', e.message);
+          console.error('⚠️ Falha ao notificar início:', e.message);
         }
+        notificado = true;
       }
     }, 60000);
 
-    ffmpeg.on('close', async code => {
+    ffmpeg.on('close', async (code) => {
       clearTimeout(timer);
       if (code === 0) {
-        console.log('✅ Live finalizada. Notificando término...');
         try {
           await enviarStatusPuppeteer({ id, status: 'finished' });
         } catch (e) {
-          console.error('⚠️ Erro ao notificar término:', e.message);
+          console.error('⚠️ Falha ao notificar término:', e.message);
         }
         resolve();
       } else {
-        console.error(`❌ ffmpeg finalizou com erro (código ${code})`);
         try {
-          await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg finalizou com código ${code}` });
+          await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg erro ${code}` });
         } catch (_) {}
         reject(new Error(`ffmpeg erro ${code}`));
       }
     });
 
-    ffmpeg.on('error', async err => {
+    ffmpeg.on('error', async (err) => {
       clearTimeout(timer);
-      console.error('❌ Erro fatal no ffmpeg:', err);
       try {
         await enviarStatusPuppeteer({ id, status: 'error', message: err.message });
       } catch (_) {}
