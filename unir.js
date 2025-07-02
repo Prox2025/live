@@ -11,12 +11,8 @@ function executarFFmpeg(args) {
     console.log(`▶️ Executando FFmpeg: ffmpeg ${args.join(' ')}`);
     const proc = spawn('ffmpeg', args, { stdio: 'inherit' });
     proc.on('close', code => {
-      if (code === 0) {
-        console.log(`✅ FFmpeg finalizado com sucesso.`);
-        resolve();
-      } else {
-        reject(new Error(`FFmpeg falhou com código ${code}`));
-      }
+      if (code === 0) resolve();
+      else reject(new Error(`FFmpeg falhou com código ${code}`));
     });
   });
 }
@@ -61,23 +57,23 @@ function obterDuracao(video) {
     ffprobe.on('close', code => {
       if (code === 0) {
         const duracao = parseFloat(output.trim());
-        console.log(`⏱️ Duração obtida: ${duracao.toFixed(2)} segundos.`);
+        console.log(`⏱️ Duração: ${duracao.toFixed(2)} segundos`);
         resolve(duracao);
       } else {
-        reject(new Error('❌ Falha ao obter duração com ffprobe'));
+        reject(new Error('❌ Erro ao obter duração com ffprobe'));
       }
     });
   });
 }
 
 async function cortarVideo(input, out1, out2, meio) {
-  console.log(`✂️ Cortando vídeo ${input} em dois: ${out1} (0-${meio}s) e ${out2} (${meio}s-fim)...`);
+  console.log(`✂️ Cortando ${input} em dois: ${out1} e ${out2}`);
   await executarFFmpeg(['-i', input, '-t', meio.toString(), '-c', 'copy', out1]);
   await executarFFmpeg(['-i', input, '-ss', meio.toString(), '-c', 'copy', out2]);
 }
 
 async function reencode(input, output) {
-  console.log(`🔄 Reencodando vídeo ${input} para ${output} (1280x720, 30fps)...`);
+  console.log(`🔄 Reencodando ${input} para ${output}`);
   await executarFFmpeg([
     '-i', input,
     '-vf', 'scale=1280:720,fps=30',
@@ -91,7 +87,7 @@ async function reencode(input, output) {
 
 async function gerarImagemTexto(texto) {
   const pathTxt = 'descricao.txt';
-  console.log(`📝 Gerando imagem de texto para rodapé com conteúdo: "${texto}"`);
+  console.log(`📝 Gerando imagem de texto: "${texto}"`);
   fs.writeFileSync(pathTxt, texto);
   await executarFFmpeg([
     '-f', 'lavfi',
@@ -100,14 +96,12 @@ async function gerarImagemTexto(texto) {
     '-frames:v', '1',
     'texto.png'
   ]);
-  console.log('✅ Imagem de texto texto.png gerada.');
+  console.log('✅ Imagem texto gerada: texto.png');
 }
 
 async function aplicarRodapeELogo(input, output, rodape, logo, delaySec = 360) {
-  console.log(`🎨 Aplicando rodapé e logo no vídeo ${input}...`);
+  console.log(`🎨 Aplicando rodapé e logo em ${input}...`);
 
-  // Filtro com fade in/out suave para o rodapé (opacidade alfa variável)
-  // Fade in 5s (360-365s), full opacidade 365-390s, fade out 5s (390-395s)
   const filter = `
     [0:v]format=rgba[base];
     [1:v]scale=iw*0.15:-1[logo_scaled];
@@ -130,16 +124,15 @@ async function aplicarRodapeELogo(input, output, rodape, logo, delaySec = 360) {
     '-c:a', 'copy',
     output
   ]);
-
-  console.log(`✅ Rodapé e logo aplicados e vídeo salvo como ${output}`);
+  console.log(`✅ Rodapé e logo aplicados: ${output}`);
 }
 
 async function unirVideos(lista, saida) {
-  console.log(`🔗 Unindo vídeos na sequência para gerar ${saida}...`);
+  console.log(`🔗 Unindo vídeos em: ${saida}`);
   const txt = 'list.txt';
   fs.writeFileSync(txt, lista.map(f => `file '${f}'`).join('\n'));
   await executarFFmpeg(['-f', 'concat', '-safe', '0', '-i', txt, '-c', 'copy', saida]);
-  console.log(`✅ Vídeos unidos em ${saida}`);
+  console.log(`✅ União completa: ${saida}`);
 }
 
 (async () => {
@@ -162,7 +155,6 @@ async function unirVideos(lista, saida) {
       console.log('🖼️ Salvando rodapé base64 em footer.png...');
       const base64Data = rodapeBase64.replace(/^data:image\/png;base64,/, '');
       fs.writeFileSync('footer.png', base64Data, { encoding: 'base64' });
-      console.log('✅ Rodapé salvo em footer.png');
     }
 
     if (rodapeTexto) await gerarImagemTexto(rodapeTexto);
@@ -176,8 +168,8 @@ async function unirVideos(lista, saida) {
     await reencode('parte1_raw.mp4', 'parte1_re.mp4');
     await reencode('parte2_raw.mp4', 'parte2_re.mp4');
 
-    await aplicarRodapeELogo('parte1_re.mp4', 'parte1_final.mp4', 'footer.png', 'logo.png', 360);
-    await aplicarRodapeELogo('parte2_re.mp4', 'parte2_final.mp4', 'footer.png', 'logo.png', 360);
+    await aplicarRodapeELogo('parte1_re.mp4', 'parte1_final.mp4', 'footer.png', 'logo.png');
+    await aplicarRodapeELogo('parte2_re.mp4', 'parte2_final.mp4', 'footer.png', 'logo.png');
 
     const arquivosProntos = ['parte1_final.mp4'];
 
@@ -185,30 +177,23 @@ async function unirVideos(lista, saida) {
       videoInicialId,
       videoMiraplayId,
       ...videosExtras.slice(0, 5),
-      videoInicialId,
       'parte2_final.mp4',
       videoFinalId
     ];
 
     for (let i = 0; i < videoIds.length; i++) {
       const id = videoIds[i];
-      if (typeof id === 'string' && id.endsWith('.mp4') && fs.existsSync(id)) {
-        console.log(`🔄 Vídeo local já existe: ${id}, adicionando direto na lista.`);
+      if (!id) continue;
+
+      if (id.endsWith('.mp4') && fs.existsSync(id)) {
         arquivosProntos.push(id);
-        continue;
+      } else {
+        const raw = `video_${i}_raw.mp4`;
+        const final = `video_${i}.mp4`;
+        await baixarArquivo(id, raw, auth);
+        await reencode(raw, final);
+        arquivosProntos.push(final);
       }
-
-      if (!id) {
-        console.log(`⚠️ ID de vídeo inválido ou vazio na posição ${i}, pulando.`);
-        continue;
-      }
-
-      const raw = `video_${i}_raw.mp4`;
-      const final = `video_${i}.mp4`;
-
-      await baixarArquivo(id, raw, auth);
-      await reencode(raw, final);
-      arquivosProntos.push(final);
     }
 
     await unirVideos(arquivosProntos, 'video_final_completo.mp4');
@@ -218,10 +203,9 @@ async function unirVideos(lista, saida) {
       video_id: liveId
     }, null, 2));
 
-    console.log('🎉 Todos os passos foram concluídos com sucesso!');
-    console.log('🎬 Vídeo final criado: video_final_completo.mp4');
+    console.log('🎉 Finalizado: vídeo salvo como video_final_completo.mp4');
   } catch (err) {
-    console.error('❌ Erro durante a execução:', err);
+    console.error('❌ Erro durante a execução:', err.message);
     process.exit(1);
   }
 })();
