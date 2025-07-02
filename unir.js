@@ -106,10 +106,11 @@ async function gerarImagemTexto(texto) {
 async function aplicarRodapeELogo(input, output, rodape, logo, delaySec = 360) {
   console.log(`🎨 Aplicando rodapé e logo no vídeo ${input}...`);
 
+  // Corrigido o filtro para escapar vírgulas no if do colorchannelmixer
   const filter = `[0:v]format=rgba[base];` +
     `[1:v]scale=iw*0.15:-1[logo_scaled];` +
     `[2:v][3:v]hstack=inputs=2[rodape_completo];` +
-    `[rodape_completo]format=rgba,colorchannelmixer=aa="if(lt(t,${delaySec}),0,if(lt(t,${delaySec + 5}),(t-${delaySec})/5,if(lt(t,${delaySec + 30}),1,if(lt(t,${delaySec + 35}),(${delaySec + 35}-t)/5,0))))"[footer_alpha];` +
+    `[rodape_completo]format=rgba,colorchannelmixer=aa='if(lt(t\\,${delaySec})\\,0\\,if(lt(t\\,${delaySec + 5})\\,(t-${delaySec})/5\\,if(lt(t\\,${delaySec + 30})\\,1\\,if(lt(t\\,${delaySec + 35})\\,(${delaySec + 35}-t)/5\\,0))))'[footer_alpha];` +
     `[base][footer_alpha]overlay=x=0:y=main_h-overlay_h:format=auto[tmp1];` +
     `[tmp1][logo_scaled]overlay=W-w-10:10:format=auto`;
 
@@ -150,7 +151,6 @@ async function unirVideos(lista, saida) {
     const videoMiraplayId = dados.video_miraplay;
     const videoFinalId = dados.video_final;
 
-    // Salvar rodapé base64 se existir
     if (rodapeBase64) {
       console.log('🖼️ Salvando rodapé base64 em footer.png...');
       const base64Data = rodapeBase64.replace(/^data:image\/png;base64,/, '');
@@ -174,7 +174,6 @@ async function unirVideos(lista, saida) {
 
     const arquivosProntos = ['parte1_final.mp4'];
 
-    // Montar lista de vídeos na ordem correta conforme pedido
     const videoIds = [
       videoInicialId,
       videoMiraplayId,
@@ -184,12 +183,9 @@ async function unirVideos(lista, saida) {
       videoFinalId
     ];
 
-    // Baixar e reencodar vídeos extras e finais
     for (let i = 0; i < videoIds.length; i++) {
       const id = videoIds[i];
-
-      // Se o item for um arquivo local já existente (como parte2_final.mp4), adicionar direto
-      if (typeof id === 'string' && fs.existsSync(id) && id.endsWith('.mp4')) {
+      if (typeof id === 'string' && id.endsWith('.mp4') && fs.existsSync(id)) {
         console.log(`🔄 Vídeo local já existe: ${id}, adicionando direto na lista.`);
         arquivosProntos.push(id);
         continue;
@@ -208,10 +204,8 @@ async function unirVideos(lista, saida) {
       arquivosProntos.push(final);
     }
 
-    // Unir todos os vídeos para gerar o vídeo final completo
     await unirVideos(arquivosProntos, 'video_final_completo.mp4');
 
-    // Salvar info do stream
     fs.writeFileSync('stream_info.json', JSON.stringify({
       stream_url: streamUrl,
       video_id: liveId
