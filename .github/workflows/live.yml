@@ -66,7 +66,11 @@ jobs:
               logo_id: $sacredi[0].logo_id,
               rodape_base64: $rodape_base64,
               rodape_texto: $rodape_texto,
-              videos_extras: (if $videos_extras == "" then [] else ($videos_extras | split(",") | map(.) ) end),
+              videos_extras: (
+                if $videos_extras == "" then [] 
+                else ($videos_extras | split(",") | map(.)) 
+                end
+              ),
               stream_url: $stream_url
             }' > input.json
 
@@ -77,7 +81,7 @@ jobs:
         run: node unir.js
 
       - name: 📤 Upload do vídeo final (opcional)
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: video_final
           path: video_final_completo.mp4
