@@ -41,15 +41,12 @@ async function baixarArquivo(fileId, destino, auth) {
       console.log(`✅ Download concluído: ${destino}`);
       resolve();
     });
-    res.data.on('error', err => {
-      reject(err);
-    });
+    res.data.on('error', err => reject(err));
   });
 }
 
 function obterDuracao(video) {
   return new Promise((resolve, reject) => {
-    console.log(`⏱️ Obtendo duração do vídeo: ${video}...`);
     const ffprobe = spawn('ffprobe', [
       '-v', 'error',
       '-show_entries', 'format=duration',
@@ -60,24 +57,22 @@ function obterDuracao(video) {
     ffprobe.stdout.on('data', chunk => output += chunk.toString());
     ffprobe.on('close', code => {
       if (code === 0) {
-        const duracao = parseFloat(output.trim());
-        console.log(`⏱️ Duração obtida: ${duracao.toFixed(2)} segundos.`);
-        resolve(duracao);
+        resolve(parseFloat(output.trim()));
       } else {
-        reject(new Error('❌ Falha ao obter duração com ffprobe'));
+        reject(new Error('❌ ffprobe falhou'));
       }
     });
   });
 }
 
 async function cortarVideo(input, out1, out2, meio) {
-  console.log(`✂️ Cortando vídeo ${input} em dois: ${out1} (0-${meio}s) e ${out2} (${meio}s-fim)...`);
+  console.log(`✂️ Cortando vídeo ${input}...`);
   await executarFFmpeg(['-i', input, '-t', meio.toString(), '-c', 'copy', out1]);
   await executarFFmpeg(['-i', input, '-ss', meio.toString(), '-c', 'copy', out2]);
 }
 
 async function reencode(input, output) {
-  console.log(`🔄 Reencodando vídeo ${input} para ${output} (1280x720, 30fps)...`);
+  console.log(`🔄 Reencodando ${input} para ${output}...`);
   await executarFFmpeg([
     '-i', input,
     '-vf', 'scale=1280:720,fps=30',
@@ -91,7 +86,6 @@ async function reencode(input, output) {
 
 async function gerarImagemTexto(texto) {
   const pathTxt = 'descricao.txt';
-  console.log(`📝 Gerando imagem de texto para rodapé com conteúdo: "${texto}"`);
   fs.writeFileSync(pathTxt, texto);
   await executarFFmpeg([
     '-f', 'lavfi',
@@ -100,39 +94,45 @@ async function gerarImagemTexto(texto) {
     '-frames:v', '1',
     'texto.png'
   ]);
-  console.log('✅ Imagem de texto texto.png gerada.');
+  console.log('✅ texto.png gerado');
 }
 
 async function aplicarRodapeELogo(input, output, rodape, logo, delaySec = 360) {
   console.log(`🎨 Aplicando rodapé e logo no vídeo ${input}...`);
 
-  // Corrigido o filtro para escapar vírgulas no if do colorchannelmixer
-  const filter = `[0:v]format=rgba[base];` +
-    `[1:v]scale=iw*0.15:-1[logo_scaled];` +
-    `[2:v][3:v]hstack=inputs=2[rodape_completo];` +
-    `[rodape_completo]format=rgba,colorchannelmixer=aa='if(lt(t\\,${delaySec})\\,0\\,if(lt(t\\,${delaySec + 5})\\,(t-${delaySec})/5\\,if(lt(t\\,${delaySec + 30})\\,1\\,if(lt(t\\,${delaySec + 35})\\,(${delaySec + 35}-t)/5\\,0))))'[footer_alpha];` +
-    `[base][footer_alpha]overlay=x=0:y=main_h-overlay_h:format=auto[tmp1];` +
-    `[tmp1][logo_scaled]overlay=W-w-10:10:format=auto`;
+  const rodapeComFade = 'rodape_fade.mp4';
+  const fadeIn = delaySec;
+  const fadeOut = delaySec + 35;
+
+  await executarFFmpeg([
+    '-loop', '1',
+    '-i', rodape,
+    '-i', 'texto.png',
+    '-filter_complex',
+    `[0:v][1:v]hstack=inputs=2,format=rgba,fps=30,fade=t=in:st=${fadeIn}:d=5:alpha=1,fade=t=out:st=${fadeOut}:d=5:alpha=1`,
+    '-t', '600',
+    '-c:v', 'qtrle',
+    rodapeComFade
+  ]);
 
   await executarFFmpeg([
     '-i', input,
     '-i', logo,
-    '-i', rodape,
-    '-i', 'texto.png',
-    '-filter_complex', filter,
+    '-i', rodapeComFade,
+    '-filter_complex',
+    `[0:v][2:v]overlay=x=0:y=main_h-overlay_h:format=auto[tmp];[tmp][1:v]overlay=W-w-10:10:format=auto`,
     '-c:a', 'copy',
     output
   ]);
 
-  console.log(`✅ Rodapé e logo aplicados e vídeo salvo como ${output}`);
+  console.log(`✅ Aplicado: ${output}`);
 }
 
 async function unirVideos(lista, saida) {
-  console.log(`🔗 Unindo vídeos na sequência para gerar ${saida}...`);
   const txt = 'list.txt';
   fs.writeFileSync(txt, lista.map(f => `file '${f}'`).join('\n'));
   await executarFFmpeg(['-f', 'concat', '-safe', '0', '-i', txt, '-c', 'copy', saida]);
-  console.log(`✅ Vídeos unidos em ${saida}`);
+  console.log(`✅ Vídeo final criado: ${saida}`);
 }
 
 (async () => {
@@ -140,27 +140,27 @@ async function unirVideos(lista, saida) {
     const auth = await autenticar();
     const dados = JSON.parse(fs.readFileSync(inputFile));
 
-    const videoPrincipal = dados.video_principal;
-    const streamUrl = dados.stream_url;
-    const liveId = dados.id;
-    const logoId = dados.logo_id;
-    const rodapeBase64 = dados.rodape_base64;
-    const rodapeTexto = dados.rodape_texto;
-    const videosExtras = dados.videos_extras || [];
-    const videoInicialId = dados.video_inicial;
-    const videoMiraplayId = dados.video_miraplay;
-    const videoFinalId = dados.video_final;
+    const {
+      video_principal,
+      stream_url,
+      id,
+      logo_id,
+      rodape_base64,
+      rodape_texto,
+      videos_extras = [],
+      video_inicial,
+      video_miraplay,
+      video_final
+    } = dados;
 
-    if (rodapeBase64) {
-      console.log('🖼️ Salvando rodapé base64 em footer.png...');
-      const base64Data = rodapeBase64.replace(/^data:image\/png;base64,/, '');
+    if (rodape_base64) {
+      const base64Data = rodape_base64.replace(/^data:image\/png;base64,/, '');
       fs.writeFileSync('footer.png', base64Data, { encoding: 'base64' });
-      console.log('✅ Rodapé salvo em footer.png');
     }
 
-    if (rodapeTexto) await gerarImagemTexto(rodapeTexto);
-    if (logoId) await baixarArquivo(logoId, 'logo.png', auth);
-    await baixarArquivo(videoPrincipal, 'principal.mp4', auth);
+    if (rodape_texto) await gerarImagemTexto(rodape_texto);
+    if (logo_id) await baixarArquivo(logo_id, 'logo.png', auth);
+    await baixarArquivo(video_principal, 'principal.mp4', auth);
 
     const duracao = await obterDuracao('principal.mp4');
     const meio = duracao / 2;
@@ -175,29 +175,25 @@ async function unirVideos(lista, saida) {
     const arquivosProntos = ['parte1_final.mp4'];
 
     const videoIds = [
-      videoInicialId,
-      videoMiraplayId,
-      ...videosExtras.slice(0, 5),
-      videoInicialId,
+      video_inicial,
+      video_miraplay,
+      ...videos_extras.slice(0, 5),
+      video_inicial,
       'parte2_final.mp4',
-      videoFinalId
+      video_final
     ];
 
     for (let i = 0; i < videoIds.length; i++) {
       const id = videoIds[i];
-      if (typeof id === 'string' && id.endsWith('.mp4') && fs.existsSync(id)) {
-        console.log(`🔄 Vídeo local já existe: ${id}, adicionando direto na lista.`);
-        arquivosProntos.push(id);
-        continue;
-      }
-
-      if (!id) {
-        console.log(`⚠️ ID de vídeo inválido ou vazio na posição ${i}, pulando.`);
-        continue;
-      }
+      if (!id) continue;
 
       const raw = `video_${i}_raw.mp4`;
       const final = `video_${i}.mp4`;
+
+      if (id.endsWith('.mp4') && fs.existsSync(id)) {
+        arquivosProntos.push(id);
+        continue;
+      }
 
       await baixarArquivo(id, raw, auth);
       await reencode(raw, final);
@@ -206,15 +202,11 @@ async function unirVideos(lista, saida) {
 
     await unirVideos(arquivosProntos, 'video_final_completo.mp4');
 
-    fs.writeFileSync('stream_info.json', JSON.stringify({
-      stream_url: streamUrl,
-      video_id: liveId
-    }, null, 2));
+    fs.writeFileSync('stream_info.json', JSON.stringify({ stream_url, video_id: id }, null, 2));
 
-    console.log('🎉 Todos os passos foram concluídos com sucesso!');
-    console.log('🎬 Vídeo final criado: video_final_completo.mp4');
+    console.log('🎉 Concluído com sucesso! Vídeo final: video_final_completo.mp4');
   } catch (err) {
-    console.error('❌ Erro durante a execução:', err);
+    console.error('❌ Erro durante execução:', err);
     process.exit(1);
   }
 })();
