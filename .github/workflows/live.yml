@@ -39,28 +39,28 @@ jobs:
 
     steps:
       - name: 📥 Clonar repositório
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      - name: 📦 Instalar FFmpeg e Node.js
+      - name: 📁 Criar package.json mínimo
+        run: |
+          echo '{}' > package.json
+
+      - name: 📦 Instalar dependências
         run: |
           sudo apt update
           sudo apt install -y ffmpeg
-
-      - name: 🧰 Criar package.json e instalar googleapis
-        run: |
-          echo '{}' > package.json
           npm install googleapis
 
       - name: 📄 Gerar input.json a partir do segredo e inputs
         run: |
           echo '${{ secrets.SACREDI_JSON }}' > sacredi.json
-
+          echo '${{ secrets.GDRIVE_KEY }}' > chave.json
           jq -n --arg id "${{ inputs.id }}" \
                 --arg video_principal "${{ inputs.video_principal }}" \
                 --arg rodape_base64 "${{ inputs.rodape_base64 }}" \
                 --arg rodape_texto "${{ inputs.rodape_texto }}" \
                 --arg stream_url "${{ inputs.stream_url }}" \
-                --argjson extras '[${{ inputs.videos_extras && format(""{0}"", join(split(inputs.videos_extras, ","), """,""")) }}]' \
+                --arg videos_extras "${{ inputs.videos_extras }}" \
                 --slurpfile sacredi sacredi.json \
             '{
               id: $id,
@@ -71,17 +71,14 @@ jobs:
               logo_id: $sacredi[0].logo_id,
               rodape_base64: $rodape_base64,
               rodape_texto: $rodape_texto,
-              videos_extras: $extras,
+              videos_extras: ($videos_extras | split(",") | map(select(. != ""))),
               stream_url: $stream_url
             }' > input.json
-
-      - name: 🔑 Adicionar chave do Google Drive
-        run: echo "${{ secrets.GDRIVE_KEY }}" > chave.json
 
       - name: 🧠 Executar script de montagem
         run: node unir.js
 
-      - name: 📤 Upload do vídeo final (v4)
+      - name: 📤 Upload do vídeo final (usando nova versão)
         uses: actions/upload-artifact@v4
         with:
           name: video_final
