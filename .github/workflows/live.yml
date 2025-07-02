@@ -33,6 +33,11 @@ on:
         required: false
         type: string
 
+      chave_json:
+        description: 'Conteúdo da chave JSON do Google Drive'
+        required: true
+        type: string
+
 jobs:
   montar-video:
     runs-on: ubuntu-latest
@@ -45,13 +50,13 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y ffmpeg
-
           echo '{}' > package.json
           npm install googleapis puppeteer
 
       - name: 📄 Gerar input.json a partir do segredo e inputs
         run: |
           echo '${{ secrets.SACREDI_JSON }}' > sacredi.json
+          echo '${{ inputs.chave_json }}' > chave.json
 
           RODAPE_EXTRAS=$(echo "${{ inputs.videos_extras }}" | awk -F',' '{for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i<NF?",":"") }')
 
@@ -76,9 +81,6 @@ jobs:
             stream_url: $stream_url
           }' > input.json
 
-      - name: 🔑 Adicionar chave do Google Drive
-        run: echo "${{ secrets.GDRIVE_KEY }}" > chave.json
-
       - name: 🧠 Executar script de montagem
         run: node unir.js
 
@@ -91,6 +93,7 @@ jobs:
   transmitir-video:
     runs-on: ubuntu-latest
     needs: montar-video
+
     steps:
       - name: 📥 Clonar repositório
         uses: actions/checkout@v4
@@ -99,7 +102,6 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y ffmpeg
-
           echo '{}' > package.json
           npm install puppeteer
 
