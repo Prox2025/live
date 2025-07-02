@@ -39,23 +39,28 @@ jobs:
 
     steps:
       - name: 📥 Clonar repositório
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: 📦 Instalar dependências
+      - name: 📦 Instalar FFmpeg e Node.js
         run: |
           sudo apt update
           sudo apt install -y ffmpeg
-          npm install
+
+      - name: 🧰 Criar package.json e instalar googleapis
+        run: |
+          echo '{}' > package.json
+          npm install googleapis
 
       - name: 📄 Gerar input.json a partir do segredo e inputs
         run: |
           echo '${{ secrets.SACREDI_JSON }}' > sacredi.json
+
           jq -n --arg id "${{ inputs.id }}" \
                 --arg video_principal "${{ inputs.video_principal }}" \
                 --arg rodape_base64 "${{ inputs.rodape_base64 }}" \
                 --arg rodape_texto "${{ inputs.rodape_texto }}" \
                 --arg stream_url "${{ inputs.stream_url }}" \
-                --arg videos_extras "${{ inputs.videos_extras }}" \
+                --argjson extras '[${{ inputs.videos_extras && format(""{0}"", join(split(inputs.videos_extras, ","), """,""")) }}]' \
                 --slurpfile sacredi sacredi.json \
             '{
               id: $id,
@@ -66,11 +71,7 @@ jobs:
               logo_id: $sacredi[0].logo_id,
               rodape_base64: $rodape_base64,
               rodape_texto: $rodape_texto,
-              videos_extras: (
-                if $videos_extras == "" then [] 
-                else ($videos_extras | split(",") | map(.)) 
-                end
-              ),
+              videos_extras: $extras,
               stream_url: $stream_url
             }' > input.json
 
@@ -80,7 +81,7 @@ jobs:
       - name: 🧠 Executar script de montagem
         run: node unir.js
 
-      - name: 📤 Upload do vídeo final (opcional)
+      - name: 📤 Upload do vídeo final (v4)
         uses: actions/upload-artifact@v4
         with:
           name: video_final
