@@ -3,8 +3,9 @@ const path = require('path');
 const { spawn } = require('child_process');
 const puppeteer = require('puppeteer');
 
-const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL; // ← vem de secret
+const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL; // ← define no secret do GitHub
 
+// Função para enviar o status ao servidor usando Puppeteer
 async function enviarStatusPuppeteer(data) {
   const browser = await puppeteer.launch({
     headless: 'new',
@@ -47,21 +48,11 @@ async function enviarStatusPuppeteer(data) {
   }
 }
 
-async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
+// Transmitir vídeo final sem aplicar filtros ou logo
+async function rodarFFmpeg(videoPath, streamUrl, id) {
   return new Promise((resolve, reject) => {
-    const filtroLogo = logoPath && fs.existsSync(logoPath)
-      ? `[1:v]format=rgba,rotate=PI*t/1.5:c=none:ow=rotw(iw):oh=roth(ih)[logo];` +
-        `[0:v][logo]overlay=W-w-10:10:shortest=1`
-      : null;
-
-    const ffmpegArgs = ['-re', '-i', videoPath];
-
-    if (filtroLogo) {
-      ffmpegArgs.push('-loop', '1', '-i', logoPath);
-      ffmpegArgs.push('-filter_complex', filtroLogo);
-    }
-
-    ffmpegArgs.push(
+    const ffmpegArgs = [
+      '-re', '-i', videoPath,
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '18',
@@ -74,7 +65,7 @@ async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
       '-ar', '44100',
       '-f', 'flv',
       streamUrl
-    );
+    ];
 
     const ffmpeg = spawn('ffmpeg', ffmpegArgs);
     ffmpeg.stdout.on('data', data => process.stdout.write(data));
@@ -120,14 +111,14 @@ async function rodarFFmpegComLogo(videoPath, logoPath, streamUrl, id) {
   });
 }
 
+// Função principal
 async function main() {
   try {
     const streamInfoPath = path.join(process.cwd(), 'stream_info.json');
-    const videoPath = path.join(process.cwd(), 'video_unido.mp4');
-    const logoPath = path.join(process.cwd(), 'logo.png');
+    const videoPath = path.join(process.cwd(), 'video_final_completo.mp4');
 
     if (!fs.existsSync(streamInfoPath)) throw new Error('stream_info.json não encontrado');
-    if (!fs.existsSync(videoPath)) throw new Error('video_unido.mp4 não encontrado');
+    if (!fs.existsSync(videoPath)) throw new Error('video_final_completo.mp4 não encontrado');
 
     const info = JSON.parse(fs.readFileSync(streamInfoPath, 'utf-8'));
     const { stream_url, video_id } = info;
@@ -135,7 +126,7 @@ async function main() {
     if (!stream_url || !video_id) throw new Error('stream_url ou video_id ausente');
 
     console.log(`🚀 Iniciando transmissão para ${stream_url}`);
-    await rodarFFmpegComLogo(videoPath, fs.existsSync(logoPath) ? logoPath : null, stream_url, video_id);
+    await rodarFFmpeg(videoPath, stream_url, video_id);
   } catch (err) {
     console.error('💥 Erro fatal:', err.message);
     process.exit(1);
