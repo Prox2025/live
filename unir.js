@@ -1,225 +1,185 @@
-
 const fs = require('fs');
-const { spawn } = require('processo_filho');
+const { spawn } = require('child_process');
 const { google } = require('googleapis');
 
 const keyFile = process.env.KEYFILE || 'chave.json';
 const inputFile = process.env.INPUTFILE || 'input.json';
-const ESCOPOS = ['https://www.googleapis.com/auth/drive.readonly'];
+const SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
 
-função executarFFmpeg(args) {
-  retornar nova Promessa((resolver, rejeitar) => {
-    console.log(`â–¶ï¸ Executando FFmpeg: ffmpeg ${args.join(' ')}`);
-    const proc = spawn('ffmpeg', args, { stdio: 'herdar' });
-    proc.on('fechar', código => {
-      se (código === 0) {
-        console.log(`âœ… FFmpeg finalizado com sucesso.`);
-        resolver();
-      } outro {
-        rejeitar(new Error(`FFmpeg falhou com código ${code}`));
+function executarFFmpeg(args) {
+  return new Promise((resolve, reject) => {
+    console.log(`▶️ Executando FFmpeg: ffmpeg ${args.join(' ')}`);
+    const proc = spawn('ffmpeg', args, { stdio: 'inherit' });
+    proc.on('close', code => {
+      if (code === 0) {
+        console.log(`✅ FFmpeg finalizado com sucesso.`);
+        resolve();
+      } else {
+        reject(new Error(`FFmpeg falhou com código ${code}`));
       }
     });
   });
 }
 
-função assíncrona autenticar() {
-  console.log('ðŸ”' Autenticando no Google Drive...');
-  const auth = novo google.auth.GoogleAuth({ keyFile, escopos: ESCOPES });
-  const cliente = aguarde auth.getClient();
-  console.log('ðŸ”' Autenticação concluída.');
-  cliente de retorno;
+async function autenticar() {
+  console.log('🔑 Autenticando no Google Drive...');
+  const auth = new google.auth.GoogleAuth({ keyFile, scopes: SCOPES });
+  const client = await auth.getClient();
+  console.log('🔑 Autenticação concluída.');
+  return client;
 }
 
-função assíncrona baixarArquivo(fileId, destino, auth) {
-  console.log(`â¬‡ï¸ Baixando arquivo do Drive ID=${fileId} para ${destino}...`);
-  const drive = google.drive({ versão: 'v3', auth });
-  const res = await drive.files.get({ fileId, alt: 'mídia' }, { responseType: 'stream' });
+async function baixarArquivo(fileId, destino, auth) {
+  console.log(`⬇️ Baixando arquivo do Drive ID=${fileId} para ${destino}...`);
+  const drive = google.drive({ version: 'v3', auth });
+  const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
 
-  retornar nova Promessa((resolver, rejeitar) => {
-    const saída = fs.createWriteStream(destino);
-    res.data.pipe(saída);
-    res.data.on('fim', () => {
-      console.log(`âœ… Download concluído: ${destino}`);
-      resolver();
+  return new Promise((resolve, reject) => {
+    const output = fs.createWriteStream(destino);
+    res.data.pipe(output);
+    res.data.on('end', () => {
+      console.log(`✅ Download concluído: ${destino}`);
+      resolve();
     });
-    res.data.on('erro', err => {
-      rejeitar(errar);
-    });
+    res.data.on('error', err => reject(err));
   });
 }
 
-função obterDuracao(video) {
-  retornar nova Promessa((resolver, rejeitar) => {
-    console.log(`â ±ï¸ Obtendo duração do vídeo: ${video}...`);
+function obterDuracao(video) {
+  return new Promise((resolve, reject) => {
     const ffprobe = spawn('ffprobe', [
-      '-v', 'erro',
-      '-show_entries', 'format=duração',
-      '-de', 'padrão=noprint_wrappers=1:nokey=1',
-      vídeo
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      video
     ]);
-    deixe saída = '';
-    ffprobe.stdout.on('dados', chunk => saída += chunk.toString());
-    ffprobe.on('fechar', código => {
-      se (código === 0) {
-        const duracao = parseFloat(output.trim());
-        console.log(`â ±ï¸ Duração obtida: ${duracao.toFixed(2)} segundos.`);
-        resolve(duracao);
-      } outro {
-        rejeitar(new Error('â Œ Falha ao obter duração com ffprobe'));
-      }
+    let output = '';
+    ffprobe.stdout.on('data', chunk => output += chunk.toString());
+    ffprobe.on('close', code => {
+      if (code === 0) resolve(parseFloat(output.trim()));
+      else reject(new Error('❌ ffprobe falhou'));
     });
   });
 }
 
-função assíncrona cortarVideo(input, out1, out2, meio) {
-  console.log(`âœ‚ï¸ Cortando vídeo ${input} em dois: ${out1} (0-${meio}s) e ${out2} (${meio}s-fim)...`);
-  aguardar executarFFmpeg(['-i', input, '-t', meio.toString(), '-c', 'copy', out1]);
-  aguardar executarFFmpeg(['-i', input, '-ss', meio.toString(), '-c', 'copy', out2]);
+async function cortarVideo(input, out1, out2, meio) {
+  await executarFFmpeg(['-i', input, '-t', meio.toString(), '-c', 'copy', out1]);
+  await executarFFmpeg(['-i', input, '-ss', meio.toString(), '-c', 'copy', out2]);
 }
 
-função assíncrona reencodificar(entrada, saída) {
-  console.log(`ðŸ”„ Reencodificando vídeo ${input} para ${output} (1280x720, 30fps)...`);
-  aguardar executarFFmpeg([
-    '-i', entrada,
-    '-vf', 'escala=1280:720,fps=30',
+async function reencode(input, output) {
+  await executarFFmpeg([
+    '-i', input,
+    '-vf', 'scale=1280:720,fps=30',
     '-c:v', 'libx264',
-    '-predefinido', 'muito rápido',
+    '-preset', 'veryfast',
     '-crf', '23',
     '-c:a', 'aac',
-    saída
+    output
   ]);
 }
 
-função assíncrona gerarImagemTexto(texto) {
-  const pathTxt = 'descricao.txt';
-  console.log(`ðŸ“ Gerando imagem de texto para rodapé com conteúdo: "${texto}"`);
-  fs.writeFileSync(pathTxt, texto);
-  aguardar executarFFmpeg([
+async function gerarImagemTexto(texto) {
+  fs.writeFileSync('descricao.txt', texto);
+  await executarFFmpeg([
     '-f', 'lavfi',
-    '-i', 'cor=c=0x00000000:s=600x80',
-    '-vf', `drawtext=textfile=${pathTxt}:fontcolor=white:fontsize=24:x=10:y=10`,
-    '-quadros:v', '1',
+    '-i', 'color=c=0x00000000:s=600x80',
+    '-vf', `drawtext=textfile=descricao.txt:fontcolor=white:fontsize=24:x=10:y=10`,
+    '-frames:v', '1',
     'texto.png'
   ]);
-  console.log('âœ… Imagem de texto texto.png gerado.');
 }
 
-função assíncrona aplicarRodapeELogo(entrada, saída, rodape, logotipo, delaySec = 360) {
-  console.log(`ðŸŽ¨ Aplicando rodapé e logo no vídeo ${input}...`);
+async function aplicarRodapeELogo(input, output, rodape, logo, delaySec = 360) {
+  console.log(`🎨 Aplicando rodapé e logo no vídeo ${input}...`);
 
-  filtro const = `
-    [0:v]formato=rgba[base];
-    [1:v]escala=iw*0,15:-1[logo_scaled];
-    [2:v][3:v]hstack=entradas=2[rodape_completo];
-    [rodape_completo]formato=rgba,
-      colorchannelmixer=aa='if(lt(t,${delaySec}),0,
-      se(lt(t,${atrasoSeg + 5}),(t-${atrasoSeg})/5,
-      se(lt(t,${delaySec + 30}),1,
-      se(lt(t,${delaySec + 35}),(${delaySec + 35}-t)/5,0))))'[footer_alpha];
-    [base][rodapé_alfa]sobreposição=x=0:y=main_h-overlay_h:formato=auto[tmp1];
-    [tmp1][logo_scaled]overlay=Ww-10:10:formato=automático
-  `;
+  const filter = `
+    [0:v]format=rgba[base];
+    [1:v]scale=iw*0.15:-1[logo_scaled];
+    [2:v][3:v]hstack=inputs=2[rodape_completo];
+    [rodape_completo]format=rgba,colorchannelmixer=aa='if(lt(t,${delaySec}),0,if(lt(t,${delaySec + 5}),(t-${delaySec})/5,if(lt(t,${delaySec + 30}),1,if(lt(t,${delaySec + 35}),(${delaySec + 35}-t)/5,0))))'[footer_alpha];
+    [base][footer_alpha]overlay=x=0:y=main_h-overlay_h:format=auto[tmp1];
+    [tmp1][logo_scaled]overlay=W-w-10:10:format=auto
+  `.replace(/\s+/g, ' ').trim();
 
-  aguardar executarFFmpeg([
-    '-i', entrada,
-    '-i', logotipo,
+  await executarFFmpeg([
+    '-i', input,
+    '-i', logo,
     '-i', rodape,
     '-i', 'texto.png',
-    '-filter_complex', filtro,
-    '-c:a', 'copiar',
-    saída
+    '-filter_complex', filter,
+    '-c:a', 'copy',
+    output
   ]);
-
-  console.log(`âœ… Rodapé e logo aplicados e vídeo salvo como ${output}`);
 }
 
-função assíncrona unirVideos(lista, saida) {
-  console.log(`ðŸ”— Unindo vídeos na sequência para gerar ${saida}...`);
-  const txt = 'lista.txt';
-  fs.writeFileSync(txt, lista.map(f => `arquivo '${f}'`).join('\n'));
-  aguardar executarFFmpeg(['-f', 'concat', '-safe', '0', '-i', txt, '-c', 'copy', saida]);
-  console.log(`âœ… Vídeos unidos em ${saida}`);
+async function unirVideos(lista, saida) {
+  fs.writeFileSync('list.txt', lista.map(f => `file '${f}'`).join('\n'));
+  await executarFFmpeg(['-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', saida]);
 }
 
-(assíncrono () => {
-  tentar {
+(async () => {
+  try {
     const auth = await autenticar();
     const dados = JSON.parse(fs.readFileSync(inputFile));
 
-    const videoPrincipal = dados.video_principal;
-    const streamUrl = dados.stream_url;
-    const liveId = dados.id;
-    const logoId = dados.logo_id;
-    const rodapeBase64 = dados.rodape_base64;
-    const rodapeTexto = dados.rodape_texto;
-    const vídeosExtras = dados.videos_extras || [];
-    const videoInicialId = dados.video_inicial;
-    const videoMiraplayId = dados.video_miraplay;
-    const videoFinalId = dados.video_final;
+    const {
+      video_principal, stream_url, id, logo_id,
+      rodape_base64, rodape_texto,
+      videos_extras = [], video_inicial, video_miraplay, video_final
+    } = dados;
 
-    se (rodapeBase64) {
-      console.log('ðŸ–¼ï¸ Salvando rodapé base64 em footer.png...');
-      const base64Data = rodapeBase64.replace(/^data:image\/png;base64,/, '');
-      fs.writeFileSync('footer.png', base64Data, { codificação: 'base64' });
-      console.log('âœ… Rodapé salvo em footer.png');
+    if (rodape_base64) {
+      fs.writeFileSync('footer.png', rodape_base64.replace(/^data:image\/png;base64,/, ''), 'base64');
     }
-
-    if (rodapeTexto) aguardar gerarImagemTexto(rodapeTexto);
-    se (logoId) aguardar baixarArquivo(logoId, 'logo.png', auth);
-    aguardar baixarArquivo(videoPrincipal, 'principal.mp4', auth);
+    if (rodape_texto) await gerarImagemTexto(rodape_texto);
+    if (logo_id) await baixarArquivo(logo_id, 'logo.png', auth);
+    await baixarArquivo(video_principal, 'principal.mp4', auth);
 
     const duracao = await obterDuracao('principal.mp4');
     const meio = duracao / 2;
 
-    aguarde cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
-    aguarde reencode('parte1_raw.mp4', 'parte1_re.mp4');
-    aguarde reencode('parte2_raw.mp4', 'parte2_re.mp4');
+    await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
+    await reencode('parte1_raw.mp4', 'parte1_re.mp4');
+    await reencode('parte2_raw.mp4', 'parte2_re.mp4');
 
-    aguardar aplicarRodapeELogo('parte1_re.mp4', 'parte1_final.mp4', 'footer.png', 'logo.png', 360);
-    aguardar aplicarRodapeELogo('parte2_re.mp4', 'parte2_final.mp4', 'footer.png', 'logo.png', 360);
+    await aplicarRodapeELogo('parte1_re.mp4', 'parte1_final.mp4', 'footer.png', 'logo.png', 360);
+    await aplicarRodapeELogo('parte2_re.mp4', 'parte2_final.mp4', 'footer.png', 'logo.png', 360);
 
-    const arquivosProntos = ['parte1_final.mp4'];
+    const arquivos = ['parte1_final.mp4'];
 
     const videoIds = [
-      IDInicial do vídeo,
-      videoMiraplayId,
-      ...vídeosExtras.slice(0, 5),
+      video_inicial,
+      video_miraplay,
+      ...videos_extras.slice(0, 5),
       'parte2_final.mp4',
-      IDFinal do vídeo
+      video_final
     ];
 
-    para (deixe i = 0; i < videoIds.length; i++) {
+    for (let i = 0; i < videoIds.length; i++) {
       const id = videoIds[i];
-      se (tipo de id === 'string' && id.endsWith('.mp4') && fs.existsSync(id)) {
-        console.log(`ðŸ”„ Vídeo local já existe: ${id}, adicionando direto na lista.`);
-        arquivosProntos.push(id);
-        continuar;
-      }
-
-      se (!id) {
-        console.log(`âš ï¸ ID do vídeo inválido ou vazio na posição ${i}, pulando.`);
-        continuar;
-      }
-
+      if (!id) continue;
       const raw = `video_${i}_raw.mp4`;
-      const final = `vídeo_${i}.mp4`;
+      const final = `video_${i}.mp4`;
 
-      aguardar baixarArquivo(id, raw, auth);
-      aguardar reencodificação(bruto, final);
-      arquivosProntos.push(final);
+      if (id.endsWith('.mp4') && fs.existsSync(id)) {
+        arquivos.push(id);
+      } else {
+        await baixarArquivo(id, raw, auth);
+        await reencode(raw, final);
+        arquivos.push(final);
+      }
     }
 
-    aguardar unirVideos(arquivosProntos, 'video_final_completo.mp4');
+    await unirVideos(arquivos, 'video_final_completo.mp4');
 
     fs.writeFileSync('stream_info.json', JSON.stringify({
-      stream_url: URL do fluxo,
-      video_id: liveId
-    }, nulo, 2));
+      stream_url, video_id: id
+    }, null, 2));
 
-    console.log('ðŸŽ‰ Todos os passos foram concluídos com sucesso!');
-    console.log('ðŸŽ¬ Vídeo final criado: video_final_completo.mp4');
-  } pegar (errar) {
-    console.error('â Œ Erro durante a execução:', err);
-    processo.exit(1);
+    console.log('🎬 Vídeo final criado com sucesso.');
+  } catch (err) {
+    console.error('❌ Erro geral:', err);
+    process.exit(1);
   }
 })();
