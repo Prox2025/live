@@ -13,8 +13,8 @@ on:
         required: true
         type: string
 
-      rodape_base64:
-        description: 'Imagem base64 do rodapé (PNG)'
+      rodape_id:
+        description: 'ID do arquivo footer.png no Google Drive'
         required: false
         type: string
 
@@ -53,17 +53,46 @@ jobs:
           echo '{}' > package.json
           npm install googleapis puppeteer
 
-      - name: 📄 Gerar input.json a partir do segredo e inputs
+      - name: 📄 Salvar chave.json
         run: |
           echo '${{ secrets.SACREDI_JSON }}' > sacredi.json
           echo '${{ inputs.chave_json }}' > chave.json
 
+      - name: 📥 Baixar rodapé do Google Drive
+        if: ${{ inputs.rodape_id != '' }}
+        run: |
+          node <<EOF
+          const fs = require('fs');
+          const { google } = require('googleapis');
+
+          const auth = new google.auth.GoogleAuth({
+            credentials: JSON.parse(fs.readFileSync('chave.json')),
+            scopes: ['https://www.googleapis.com/auth/drive.readonly']
+          });
+
+          async function baixarRodape() {
+            const drive = google.drive({ version: 'v3', auth: await auth.getClient() });
+            const dest = fs.createWriteStream('footer.png');
+            const res = await drive.files.get(
+              { fileId: '${{ inputs.rodape_id }}', alt: 'media' },
+              { responseType: 'stream' }
+            );
+            await new Promise((resolve, reject) => {
+              res.data.pipe(dest).on('finish', resolve).on('error', reject);
+            });
+            console.log('✅ footer.png baixado com sucesso!');
+          }
+
+          baixarRodape();
+          EOF
+
+      - name: 📄 Gerar input.json
+        run: |
           RODAPE_EXTRAS=$(echo "${{ inputs.videos_extras }}" | awk -F',' '{for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i<NF?",":"") }')
 
           jq -n \
             --arg id "${{ inputs.id }}" \
             --arg video_principal "${{ inputs.video_principal }}" \
-            --arg rodape_base64 "${{ inputs.rodape_base64 }}" \
             --arg rodape_texto "${{ inputs.rodape_texto }}" \
             --arg stream_url "${{ inputs.stream_url }}" \
             --argjson extras "[$RODAPE_EXTRAS]" \
@@ -75,7 +104,6 @@ jobs:
             video_miraplay: $sacredi[0].video_miraplay,
             video_final: $sacredi[0].video_final,
             logo_id: $sacredi[0].logo_id,
-            rodape_base64: $rodape_base64,
             rodape_texto: $rodape_texto,
             videos_extras: $extras,
             stream_url: $stream_url
@@ -105,7 +133,7 @@ jobs:
           echo '{}' > package.json
           npm install puppeteer
 
-      - name: 📄 Copiar vídeo final e stream_info.json do job anterior
+      - name: 📄 Copiar vídeo final
         uses: actions/download-artifact@v3
         with:
           name: video_final
