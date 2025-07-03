@@ -10,7 +10,7 @@ if (!SERVER_STATUS_URL) {
   process.exit(1);
 }
 
-// Função para enviar o status ao servidor usando Puppeteer
+// Envia status ao servidor via Puppeteer
 async function enviarStatusPuppeteer(data) {
   const browser = await puppeteer.launch({
     headless: 'new',
@@ -21,13 +21,14 @@ async function enviarStatusPuppeteer(data) {
     const page = await browser.newPage();
     await page.emulateTimezone('Africa/Maputo');
 
-    console.log(`🌐 Acessando status API...`);
+    console.log(`🌐 Acessando API de status...`);
     await page.goto(SERVER_STATUS_URL, {
       waitUntil: 'networkidle2',
       timeout: 60000
     });
 
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    // Pequena espera para garantir carregamento total
+    await new Promise(r => setTimeout(r, 3000));
 
     const resposta = await page.evaluate(async (payload) => {
       try {
@@ -39,12 +40,13 @@ async function enviarStatusPuppeteer(data) {
         const texto = await res.text();
         return { status: res.status, texto };
       } catch (e) {
-        return { status: 500, texto: 'Erro interno no fetch: ' + e.message };
+        return { status: 500, texto: 'Erro fetch: ' + e.message };
       }
     }, data);
 
     console.log("📡 Resposta do servidor:", resposta);
     return resposta;
+
   } catch (err) {
     console.error("❌ Erro ao enviar status:", err.message);
     throw err;
@@ -53,7 +55,7 @@ async function enviarStatusPuppeteer(data) {
   }
 }
 
-// Transmitir vídeo final sem aplicar filtros ou logo
+// Função para rodar ffmpeg transmitindo o vídeo
 async function rodarFFmpeg(videoPath, streamUrl, id) {
   return new Promise((resolve, reject) => {
     const ffmpegArgs = [
@@ -76,24 +78,24 @@ async function rodarFFmpeg(videoPath, streamUrl, id) {
 
     let notificado = false;
 
+    // Notifica início quando ffmpeg começar a enviar dados
     const notificarInicio = async () => {
       if (!notificado) {
         try {
           await enviarStatusPuppeteer({ id, status: 'started' });
-          console.log('✅ Início da live notificado');
+          console.log('✅ Notificado início da transmissão');
         } catch (e) {
-          console.error('⚠️ Falha ao notificar início:', e.message);
+          console.error('⚠️ Erro notificando início:', e.message);
         }
         notificado = true;
       }
     };
 
-    // Notifica assim que o ffmpeg começar a emitir stderr (início real)
     ffmpeg.stderr.once('data', () => {
       notificarInicio();
     });
 
-    // Timeout como fallback para garantir notificação
+    // Timeout fallback para notificar início após 60s
     const timer = setTimeout(() => {
       notificarInicio();
     }, 60000);
@@ -106,13 +108,14 @@ async function rodarFFmpeg(videoPath, streamUrl, id) {
       if (code === 0) {
         try {
           await enviarStatusPuppeteer({ id, status: 'finished' });
+          console.log('✅ Transmissão finalizada com sucesso');
         } catch (e) {
-          console.error('⚠️ Falha ao notificar término:', e.message);
+          console.error('⚠️ Erro notificando término:', e.message);
         }
         resolve();
       } else {
         try {
-          await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg erro ${code}` });
+          await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg saiu com código ${code}` });
         } catch (_) {}
         reject(new Error(`ffmpeg erro ${code}`));
       }
@@ -138,12 +141,14 @@ async function main() {
     if (!fs.existsSync(videoPath)) throw new Error('video_final_completo.mp4 não encontrado');
 
     const info = JSON.parse(fs.readFileSync(streamInfoPath, 'utf-8'));
-    const { stream_url, video_id } = info;
+    const { stream_url, id, video_id } = info;
 
-    if (!stream_url || !video_id) throw new Error('stream_url ou video_id ausente');
+    // O seu JSON parece ter 'id' ou 'video_id', use o que for certo
+    const streamId = id || video_id;
+    if (!stream_url || !streamId) throw new Error('stream_url ou id/video_id ausente em stream_info.json');
 
-    console.log(`🚀 Iniciando transmissão para ${stream_url}`);
-    await rodarFFmpeg(videoPath, stream_url, video_id);
+    console.log(`🚀 Iniciando transmissão para ${stream_url} com id ${streamId}`);
+    await rodarFFmpeg(videoPath, stream_url, streamId);
 
   } catch (err) {
     console.error('💥 Erro fatal:', err.message);
