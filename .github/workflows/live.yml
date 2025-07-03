@@ -119,11 +119,13 @@ jobs:
       - name: 🧠 Executar script de montagem
         run: node unir.js
 
-      - name: 📤 Upload do vídeo final
+      - name: 📤 Upload do vídeo final e informações
         uses: actions/upload-artifact@v4
         with:
           name: video_final
-          path: video_final_completo.mp4
+          path: |
+            video_final_completo.mp4
+            stream_info.json
 
   transmitir-video:
     runs-on: ubuntu-latest
@@ -140,7 +142,7 @@ jobs:
           echo '{}' > package.json
           npm install puppeteer
 
-      - name: 📄 Copiar vídeo final
+      - name: 📄 Copiar vídeo final e stream_info
         uses: actions/download-artifact@v4
         with:
           name: video_final
