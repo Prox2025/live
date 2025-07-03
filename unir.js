@@ -1,7 +1,6 @@
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { google } = require('googleapis');
-const path = require('path');
 
 const keyFile = process.env.KEYFILE || 'chave.json';
 const inputFile = process.env.INPUTFILE || 'input.json';
@@ -134,13 +133,15 @@ async function gerarRodapeComVisual(rodapeImg, textoImg, saida) {
     '-filter_complex',
     '[1:v] scale=100x100 [img]; [2:v] scale=1180x100 [txt]; [0:v][img] overlay=10:0 [tmp1]; [tmp1][txt] overlay=120:0',
     '-t', '600',
-    '-c:v', 'qtrle',
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '23',
     saida
   ]);
   registrarTemporario(saida);
 }
 
-async function aplicarRodapeELogo(input, output, rodape, logo, delaySec = 360) {
+async function aplicarRodapeELogo(input, output, rodape, logo) {
   if (!fs.existsSync(rodape)) throw new Error(`❌ Rodapé não encontrado: ${rodape}`);
   if (!fs.existsSync(logo)) throw new Error(`❌ Logo não encontrado: ${logo}`);
   if (!fs.existsSync('texto.png')) throw new Error('❌ texto.png não encontrado');
@@ -186,7 +187,6 @@ async function unirVideos(lista, saida) {
       'video_final',
     ];
 
-    // Verifica campos vazios ou ausentes
     const camposVazios = camposObrigatorios.filter(campo => {
       const valor = dados[campo];
       return valor === undefined || valor === null || valor === '';
