@@ -119,7 +119,7 @@ jobs:
       - name: 🧠 Executar script de montagem
         run: node unir.js
 
-      - name: 📤 Upload do vídeo final e informações
+      - name: 📤 Salvar vídeo final e stream_info como artifact
         uses: actions/upload-artifact@v4
         with:
           name: video_final
@@ -138,7 +138,7 @@ jobs:
       - name: 📦 Instalar dependências para transmissão
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg unzip
+          sudo apt install -y ffmpeg
           echo '{}' > package.json
           npm install puppeteer
 
@@ -146,12 +146,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: video_final
-          path: .
+          path: video_final
 
-      - name: 📂 Descompactar artifact
-        run: unzip -o video_final.zip -d .
+      - name: 📂 Copiar arquivos para diretório atual
+        run: cp video_final/* .
 
-      - name: 📝 Listar arquivos para debug
+      - name: 📝 Listar arquivos (debug opcional)
         run: ls -la
 
       - name: ▶️ Transmitir vídeo final
