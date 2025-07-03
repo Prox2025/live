@@ -1,4 +1,4 @@
-name: Montar vídeo com logo, rodapé e partes
+name: Montar e Transmitir Vídeo
 
 on:
   workflow_dispatch:
@@ -138,15 +138,21 @@ jobs:
       - name: 📦 Instalar dependências para transmissão
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg
+          sudo apt install -y ffmpeg unzip
           echo '{}' > package.json
           npm install puppeteer
 
-      - name: 📄 Copiar vídeo final e stream_info
+      - name: 📄 Baixar artifact com vídeo e stream_info
         uses: actions/download-artifact@v4
         with:
           name: video_final
           path: .
+
+      - name: 📂 Descompactar artifact
+        run: unzip -o video_final.zip -d .
+
+      - name: 📝 Listar arquivos para debug
+        run: ls -la
 
       - name: ▶️ Transmitir vídeo final
         env:
