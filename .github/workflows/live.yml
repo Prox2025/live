@@ -141,7 +141,7 @@ jobs:
           npm install puppeteer
 
       - name: 📄 Copiar vídeo final
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: video_final
           path: .
