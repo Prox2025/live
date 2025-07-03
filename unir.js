@@ -5,7 +5,6 @@ const { google } = require('googleapis');
 const keyFile = process.env.KEYFILE || 'chave.json';
 const inputFile = process.env.INPUTFILE || 'input.json';
 const SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
-
 const arquivosTemporarios = [];
 
 function executarFFmpeg(args) {
@@ -197,14 +196,8 @@ async function unirVideos(lista, saida) {
     const dados = JSON.parse(fs.readFileSync(inputFile));
 
     const camposObrigatorios = [
-      'id',
-      'video_principal',
-      'logo_id',
-      'rodape_id',
-      'rodape_texto',
-      'video_inicial',
-      'video_miraplay',
-      'video_final',
+      'id', 'video_principal', 'logo_id', 'rodape_id', 'rodape_texto',
+      'video_inicial', 'video_miraplay', 'video_final'
     ];
 
     const camposVazios = camposObrigatorios.filter(campo => {
@@ -217,9 +210,11 @@ async function unirVideos(lista, saida) {
       camposVazios.forEach(c => console.log(` - ${c}`));
       throw new Error('❌ input.json está incompleto. Corrija os campos acima.');
     }
+
     console.log('✅ Todos os campos obrigatórios estão preenchidos.');
 
     const {
+      id,
       video_principal,
       logo_id,
       rodape_id,
@@ -227,7 +222,8 @@ async function unirVideos(lista, saida) {
       videos_extras = [],
       video_inicial,
       video_miraplay,
-      video_final
+      video_final,
+      stream_url
     } = dados;
 
     await baixarArquivo(rodape_id, 'footer.png', auth);
@@ -235,13 +231,11 @@ async function unirVideos(lista, saida) {
     await baixarArquivo(video_principal, 'principal.mp4', auth);
 
     await gerarImagemTexto(rodape_texto, 'texto.png');
-
     await gerarRodapeComGradienteEAnimacao('footer.png', 'texto.png', 'rodape_fade.mp4');
 
     const duracao = await obterDuracao('principal.mp4');
     const meio = duracao / 2;
     await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
-
     await reencode('parte1_raw.mp4', 'parte1_re.mp4');
     await reencode('parte2_raw.mp4', 'parte2_re.mp4');
 
@@ -274,6 +268,16 @@ async function unirVideos(lista, saida) {
     }
 
     await unirVideos(arquivosProntos, 'video_final_completo.mp4');
+
+    // ✅ Salvar stream_info.json
+    if (stream_url && id) {
+      fs.writeFileSync('stream_info.json', JSON.stringify({
+        stream_url,
+        id,
+        video_id: id
+      }, null, 2));
+      console.log('💾 stream_info.json criado com sucesso.');
+    }
 
     limparTemporarios();
 
