@@ -116,7 +116,7 @@ async function gerarImagemTexto(texto, output) {
   await executarFFmpeg([
     '-f', 'lavfi',
     '-i', 'color=black@0.0:size=640x100',
-    '-vf', `drawtext=textfile=${txtFile}:fontcolor=white:fontsize=36:font=Arial:text_shadow=1:x=10:y=30`,
+    '-vf', `drawtext=textfile=${txtFile}:fontcolor=white:fontsize=36:font=Arial:shadowcolor=black:shadowx=2:shadowy=2:x=10:y=30`,
     '-frames:v', '1',
     output
   ]);
@@ -157,10 +157,10 @@ async function aplicarRodapeELogo(input, output, rodape, logo, mostrarLogo) {
 
   filtros.push(`[1:v]format=rgba[rodape];[2:v]format=rgba[logo]`);
 
-  filtros.push(`[0:v][rodape]overlay=0:H-h:enable='between(t,360,420)'[tmp1]`);
+  filtros.push(`[0:v][rodape]overlay=0:H-h:enable='between(t,0,60)'[tmp1]`);
 
   if (mostrarLogo) {
-    filtros.push(`[tmp1][logo]overlay=W-w-10:10:enable='between(t,360,420)'`);
+    filtros.push(`[tmp1][logo]overlay=W-w-10:10:enable='between(t,0,60)'`);
   } else {
     filtros.push(`[tmp1]null`);
   }
