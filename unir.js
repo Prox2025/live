@@ -8,6 +8,21 @@ const SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
 
 const arquivosTemporarios = [];
 
+function executarFFmpeg(args) {
+  return new Promise((resolve, reject) => {
+    console.log(`▶️ Executando FFmpeg:\nffmpeg ${args.join(' ')}`);
+    const proc = spawn('ffmpeg', args, { stdio: 'inherit' });
+    proc.on('close', code => {
+      if (code === 0) {
+        console.log(`✅ FFmpeg finalizado com sucesso.`);
+        resolve();
+      } else {
+        reject(new Error(`❌ FFmpeg falhou com código ${code}`));
+      }
+    });
+  });
+}
+
 function registrarTemporario(arquivo) {
   arquivosTemporarios.push(arquivo);
 }
@@ -24,21 +39,6 @@ function limparTemporarios() {
       console.warn(`⚠️ Falha ao remover ${arquivo}:`, e.message);
     }
   }
-}
-
-function executarFFmpeg(args) {
-  return new Promise((resolve, reject) => {
-    console.log(`▶️ Executando FFmpeg:\nffmpeg ${args.join(' ')}`);
-    const proc = spawn('ffmpeg', args, { stdio: 'inherit' });
-    proc.on('close', code => {
-      if (code === 0) {
-        console.log(`✅ FFmpeg finalizado com sucesso.`);
-        resolve();
-      } else {
-        reject(new Error(`❌ FFmpeg falhou com código ${code}`));
-      }
-    });
-  });
 }
 
 async function autenticar() {
@@ -87,7 +87,7 @@ function obterDuracao(video) {
 }
 
 async function cortarVideo(input, out1, out2, meio) {
-  console.log(`✂️ Cortando vídeo ${input} em dois...`);
+  console.log(`✂️ Cortando vídeo ${input}...`);
   await executarFFmpeg(['-i', input, '-t', meio.toString(), '-c', 'copy', out1]);
   await executarFFmpeg(['-i', input, '-ss', meio.toString(), '-c', 'copy', out2]);
   registrarTemporario(out1);
@@ -116,58 +116,65 @@ async function gerarImagemTexto(texto, output) {
   await executarFFmpeg([
     '-f', 'lavfi',
     '-i', 'color=black@0.0:size=640x100',
-    '-vf', `drawtext=textfile=${txtFile}:fontcolor=white:fontsize=36:font=Arial:fontweight=900:text_shadowncolor=black:x=10:y=30`,
+    '-vf', `drawtext=textfile=${txtFile}:fontcolor=white:fontsize=36:font=Arial:text_shadow=1:x=10:y=30`,
     '-frames:v', '1',
     output
   ]);
   registrarTemporario(output);
 }
 
-async function gerarRodapeFundo(output) {
-  console.log('🎨 Gerando fundo de rodapé com gradiente...');
-  // Criar gradiente no ffmpeg é complicado, então vamos fazer uma cor preta semi-transparente para efeito similar
+async function gerarRodapeComGradienteEAnimacao(rodapeImg, textoImg, saida) {
+  console.log('🎨 Gerando rodapé com gradiente e animação suave...');
+
   await executarFFmpeg([
     '-f', 'lavfi',
-    '-i', 'color=black@0.6:size=1280x100',
-    '-t', '60',
-    '-r', '30',
-    '-c:v', 'libx264',
-    '-pix_fmt', 'yuva420p',
-    output
-  ]);
-  registrarTemporario(output);
-}
-
-// Aplica rodapé com efeito suave (fade in e fade out no Y) entre 360 e 420s (6 a 7 min)
-async function aplicarRodape(input, output, rodapeFundo, rodapeTexto, logo) {
-  console.log('🎥 Aplicando rodapé com efeito de slide suave e logo...');
-  
-  // Overlay do rodapé no fundo com animação Y (slide up/down) e fade, só aparece entre 360 e 420s (6-7 minutos)
-  // O logo aparece sempre no topo direito, mas somente no vídeo principal (usar input para decidir)
-  
-  // Para o overlay animado no eixo Y, fórmula:
-  // y = if(between(t,360,361), H - (t-360)*100, if(between(t,361,419), H - 100, if(between(t,419,420), H - 100 + (t-419)*100, NAN)))
-  // Isso faz slide para dentro em 1s, mantém 6min (360-419s), e slide para fora em 1s
-
-  const overlayRodape = `[0:v][1:v]overlay=0:'if(between(t,360,361), H-(t-360)*100, if(between(t,361,419), H-100, if(between(t,419,420), H-100+(t-419)*100, NAN)))':enable='between(t,360,420)'[tmp1]`;
-
-  // Logo no canto superior direito, 10px da borda, tamanho máximo 10% da largura
-  // Usar scale e overlay
-  const overlayLogo = `[tmp1][2:v]overlay=W-w-10:10:enable='between(t,0,9999)'`;
-
-  // Concatenar filter_complex
-  const filterComplex = `${overlayRodape};${overlayLogo}`;
-
-  await executarFFmpeg([
-    '-i', input,
-    '-i', rodapeFundo,
-    '-i', logo,
-    '-filter_complex', filterComplex,
-    '-c:a', 'copy',
+    '-i', 'color=black@0.0:size=1280x100',
+    '-loop', '1',
+    '-i', rodapeImg,
+    '-loop', '1',
+    '-i', textoImg,
+    '-filter_complex',
+    `[1:v]format=rgba,fade=t=in:st=0:d=3:alpha=1,fade=t=out:st=57:d=3:alpha=1,scale=100:100[rodape];
+     [2:v]format=rgba,fade=t=in:st=0:d=3:alpha=1,fade=t=out:st=57:d=3:alpha=1,scale=1180:100[texto];
+     [0:v][rodape]overlay=10:0:format=auto[tmp1];
+     [tmp1][texto]overlay=120:0:format=auto,format=yuv420p,trim=duration=60,setsar=1`,
     '-c:v', 'libx264',
     '-preset', 'veryfast',
     '-crf', '23',
-    '-movflags', '+faststart',
+    '-t', '60',
+    saida
+  ]);
+  registrarTemporario(saida);
+}
+
+async function aplicarRodapeELogo(input, output, rodape, logo, mostrarLogo) {
+  if (!fs.existsSync(rodape)) throw new Error(`❌ Rodapé não encontrado: ${rodape}`);
+  if (!fs.existsSync(logo)) throw new Error(`❌ Logo não encontrado: ${logo}`);
+
+  console.log(`🎥 Aplicando rodapé e logo ao vídeo: ${input}`);
+
+  const filtros = [];
+
+  filtros.push(`[1:v]format=rgba[rodape];[2:v]format=rgba[logo]`);
+
+  filtros.push(`[0:v][rodape]overlay=0:H-h:enable='between(t,360,420)'[tmp1]`);
+
+  if (mostrarLogo) {
+    filtros.push(`[tmp1][logo]overlay=W-w-10:10:enable='between(t,360,420)'`);
+  } else {
+    filtros.push(`[tmp1]null`);
+  }
+
+  const filterComplex = filtros.join(';');
+
+  await executarFFmpeg([
+    '-i', input,
+    '-i', rodape,
+    '-i', logo,
+    '-filter_complex', filterComplex,
+    '-c:a', 'copy',
+    '-preset', 'veryfast',
+    '-crf', '23',
     output
   ]);
 
@@ -175,7 +182,7 @@ async function aplicarRodape(input, output, rodapeFundo, rodapeTexto, logo) {
 }
 
 async function unirVideos(lista, saida) {
-  console.log('🔗 Unindo vídeos...');
+  console.log('🔗 Unindo vídeos finais...');
   const txt = 'list.txt';
   fs.writeFileSync(txt, lista.map(f => `file '${f}'`).join('\n'));
   registrarTemporario(txt);
@@ -194,6 +201,7 @@ async function unirVideos(lista, saida) {
       'video_principal',
       'logo_id',
       'rodape_id',
+      'rodape_texto',
       'video_inicial',
       'video_miraplay',
       'video_final',
@@ -205,57 +213,41 @@ async function unirVideos(lista, saida) {
     });
 
     if (camposVazios.length > 0) {
-      console.error('❌ Os seguintes campos obrigatórios estão vazios ou ausentes:');
-      camposVazios.forEach(campo => console.error(` - ${campo}`));
+      console.log('❌ Os seguintes campos obrigatórios estão vazios ou ausentes:');
+      camposVazios.forEach(c => console.log(` - ${c}`));
       throw new Error('❌ input.json está incompleto. Corrija os campos acima.');
     }
-
     console.log('✅ Todos os campos obrigatórios estão preenchidos.');
 
     const {
       video_principal,
-      id,
       logo_id,
       rodape_id,
-      rodape_texto = '',
+      rodape_texto,
+      videos_extras = [],
       video_inicial,
       video_miraplay,
-      videos_extras = [],
       video_final
     } = dados;
 
-    // Baixa rodapé e logo
     await baixarArquivo(rodape_id, 'footer.png', auth);
     await baixarArquivo(logo_id, 'logo.png', auth);
-
-    // Gera imagem do texto do rodapé (ou transparente se vazio)
-    if (rodape_texto.trim().length > 0) {
-      await gerarImagemTexto(rodape_texto, 'texto.png');
-    } else {
-      console.log('⚠️ rodape_texto vazio, gerando imagem transparente.');
-      await executarFFmpeg(['-f', 'lavfi', '-i', 'color=black@0.0:size=640x100', '-frames:v', '1', 'texto.png']);
-      registrarTemporario('texto.png');
-    }
-
-    // Baixa vídeo principal
     await baixarArquivo(video_principal, 'principal.mp4', auth);
+
+    await gerarImagemTexto(rodape_texto, 'texto.png');
+
+    await gerarRodapeComGradienteEAnimacao('footer.png', 'texto.png', 'rodape_fade.mp4');
+
     const duracao = await obterDuracao('principal.mp4');
     const meio = duracao / 2;
-
-    // Divide vídeo principal em duas partes
     await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
 
-    // Reencode as partes cortadas para garantir compatibilidade
     await reencode('parte1_raw.mp4', 'parte1_re.mp4');
     await reencode('parte2_raw.mp4', 'parte2_re.mp4');
 
-    // Aplica rodapé com efeito e logo somente na parte 1 e 2 do vídeo principal
-    await aplicarRodape('parte1_re.mp4', 'parte1_final.mp4', 'footer.png', 'texto.png', 'logo.png');
-    await aplicarRodape('parte2_re.mp4', 'parte2_final.mp4', 'footer.png', 'texto.png', 'logo.png');
+    await aplicarRodapeELogo('parte1_re.mp4', 'parte1_final.mp4', 'rodape_fade.mp4', 'logo.png', true);
+    await aplicarRodapeELogo('parte2_re.mp4', 'parte2_final.mp4', 'rodape_fade.mp4', 'logo.png', true);
 
-    // Monta lista de vídeos para concat
-    // Conforme sua regra:
-    // video_inicial, video_miraplay, videos_extras..., video_inicial (de novo), parte2_final.mp4, video_final
     const videoIds = [
       video_inicial,
       video_miraplay,
@@ -265,39 +257,28 @@ async function unirVideos(lista, saida) {
       video_final
     ];
 
-    // Lista para armazenar nomes de arquivos prontos para concat
     const arquivosProntos = ['parte1_final.mp4'];
 
-    // Processa todos os vídeos da lista videoIds
     for (let i = 0; i < videoIds.length; i++) {
-      const vid = videoIds[i];
-
-      // Se já for arquivo local (ex: parte2_final.mp4), adiciona direto
-      if (fs.existsSync(vid)) {
-        arquivosProntos.push(vid);
+      const idVideo = videoIds[i];
+      if (!idVideo) continue;
+      if (idVideo.endsWith('.mp4') && fs.existsSync(idVideo)) {
+        arquivosProntos.push(idVideo);
         continue;
       }
-
-      // Senão, baixa e reencode
       const raw = `video_${i}_raw.mp4`;
       const final = `video_${i}.mp4`;
-
-      await baixarArquivo(vid, raw, auth);
+      await baixarArquivo(idVideo, raw, auth);
       await reencode(raw, final);
-
       arquivosProntos.push(final);
     }
 
-    // Une todos os vídeos em um arquivo final
     await unirVideos(arquivosProntos, 'video_final_completo.mp4');
 
-    // Salva info de streaming
-    fs.writeFileSync('stream_info.json', JSON.stringify({ video_id: id }, null, 2));
+    limparTemporarios();
 
-    console.log('🎉 Processo concluído com sucesso! Vídeo final: video_final_completo.mp4');
-
-  } catch (err) {
-    console.error('🚨 ERRO:', err.message);
+  } catch (error) {
+    console.error('🚨 ERRO:', error.message);
     limparTemporarios();
     process.exit(1);
   }
