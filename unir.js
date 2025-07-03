@@ -168,6 +168,7 @@ async function unirVideos(lista, saida) {
 
 (async () => {
   try {
+    console.log('📦 Lendo input.json...');
     const auth = await autenticar();
     const dados = JSON.parse(fs.readFileSync(inputFile));
 
@@ -176,7 +177,7 @@ async function unirVideos(lista, saida) {
       stream_url,
       id,
       logo_id,
-      rodape_base64,
+      rodape_id,
       rodape_texto,
       videos_extras = [],
       video_inicial,
@@ -184,42 +185,34 @@ async function unirVideos(lista, saida) {
       video_final
     } = dados;
 
-    console.log('📄 input.json carregado.');
-
-    // Rodapé
-    if (rodape_base64) {
-      const base64Data = rodape_base64.split(',')[1];
-      fs.writeFileSync('footer.png', base64Data, { encoding: 'base64' });
-      registrarTemporario('footer.png');
-      const stats = fs.statSync('footer.png');
-      if (stats.size === 0) throw new Error('❌ footer.png está vazio. rodape_base64 pode estar inválido.');
-    } else {
-      throw new Error('❌ rodape_base64 ausente. Não é possível continuar sem imagem de rodapé.');
+    // === Verificações obrigatórias
+    if (!id || !video_principal || !logo_id || !rodape_id || !video_inicial || !video_miraplay || !video_final) {
+      throw new Error('❌ input.json está incompleto. Verifique os campos obrigatórios.');
     }
 
-    // Texto ao lado
+    console.log('✅ Todos os campos obrigatórios presentes.');
+
+    // === Baixar rodapé
+    await baixarArquivo(rodape_id, 'footer.png', auth);
+
+    // === Texto (opcional)
     if (rodape_texto) {
       await gerarImagemTexto(rodape_texto);
     } else {
-      console.log('⚠️ rodape_texto ausente. Gerando texto.png transparente.');
-      await executarFFmpeg([
-        '-f', 'lavfi', '-i', 'color=c=0x00000000:s=600x80',
-        '-frames:v', '1', 'texto.png'
-      ]);
+      console.log('⚠️ rodape_texto ausente. Gerando imagem transparente.');
+      await executarFFmpeg(['-f', 'lavfi', '-i', 'color=c=0x00000000:s=600x80', '-frames:v', '1', 'texto.png']);
       registrarTemporario('texto.png');
     }
 
-    // Logo
-    if (!logo_id) throw new Error('❌ logo_id ausente.');
+    // === Baixar logo
     await baixarArquivo(logo_id, 'logo.png', auth);
-    registrarTemporario('logo.png');
 
-    // Principal
+    // === Baixar vídeo principal
     await baixarArquivo(video_principal, 'principal.mp4', auth);
-
     const duracao = await obterDuracao('principal.mp4');
     const meio = duracao / 2;
 
+    // === Dividir e reencodar vídeo principal
     await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
     await reencode('parte1_raw.mp4', 'parte1_re.mp4');
     await reencode('parte2_raw.mp4', 'parte2_re.mp4');
@@ -258,7 +251,7 @@ async function unirVideos(lista, saida) {
     await unirVideos(arquivosProntos, 'video_final_completo.mp4');
 
     fs.writeFileSync('stream_info.json', JSON.stringify({ stream_url, video_id: id }, null, 2));
-    console.log('🎉 Finalizado com sucesso! Vídeo final: video_final_completo.mp4');
+    console.log('🎉 Finalizado com sucesso! 🎬 Vídeo final: video_final_completo.mp4');
   } catch (err) {
     console.error('🚨 ERRO:', err.message);
     limparTemporarios();
