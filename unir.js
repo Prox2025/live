@@ -98,46 +98,44 @@ async function reencode(input, output) {
   registrarTemporario(output);
 }
 
-function gerarTemposAleatorios(duracao, quantos = 2, distanciaMinima = 60, margemFinal = 50) {
-  const exibicoes = [];
-  while (exibicoes.length < quantos) {
-    const t = Math.floor(Math.random() * (duracao - margemFinal));
-    if (!exibicoes.some(e => Math.abs(e - t) < distanciaMinima)) {
-      exibicoes.push(t);
-    }
+function gerarTemposAleatorios(duracao, quantidade) {
+  const tempos = [];
+  while (tempos.length < quantidade) {
+    const t = Math.floor(Math.random() * (duracao - 50));
+    if (!tempos.some(e => Math.abs(e - t) < 60)) tempos.push(t);
   }
-  return exibicoes.sort((a, b) => a - b);
+  tempos.sort((a, b) => a - b);
+  return tempos;
 }
 
-async function aplicarRodapeELogoComGradiente(input, output, rodape, logo, tempoTotal) {
-  const exibicoes = gerarTemposAleatorios(tempoTotal, 2);
+async function aplicarRodapeELogoComGradiente(input, output, rodape, logo, duracao, exibirLogo) {
+  const exibicoes = gerarTemposAleatorios(duracao, 2); // dois tempos para o rodapé
   console.log(`🎞️ Aplicando rodapé com fundo degradê animado em: ${input}`);
   console.log(`⏱️ Rodapés serão exibidos em:`, exibicoes);
 
-  const filtros = [
-    `[1:v]scale=720:72,format=rgba,split=2[r0][r1]`
-  ];
-
-  let anterior = '[0:v]';
+  const filtros = [`[1:v]scale=720:72,format=rgba,split=2[r0][r1]`];
 
   exibicoes.forEach((inicio, i) => {
     const fim = inicio + 40;
     filtros.push(
-      `color=black@1.0:size=720x72:d=40,format=rgba,lut=a='if(lt(y,10),255,if(lt(y,20),200,if(lt(y,30),150,if(lt(y,40),100,if(lt(y,50),60,if(lt(y,60),30,0)))))')[bg${i}]`,
+      `color=black@1.0:size=720x72:d=40,format=rgba,lut=a='if(lt(y\\,10)\\,255\\,if(lt(y\\,20)\\,200\\,if(lt(y\\,30)\\,150\\,if(lt(y\\,40)\\,100\\,if(lt(y\\,50)\\,60\\,if(lt(y\\,60)\\,30\\,0)))))))[bg${i}]`,
       `[r${i}]trim=start=${inicio}:end=${fim},setpts=PTS-STARTPTS[rodape${i}]`,
       `[bg${i}]trim=start=${inicio}:end=${fim},setpts=PTS-STARTPTS[bgtrim${i}]`,
-      `${anterior}[bgtrim${i}]overlay=x=0:y='if(lt(t,${inicio}),H,if(lt(t,${fim}),H-72,NAN))':enable='between(t,${inicio},${fim})'[tmpbg${i}]`,
-      `[tmpbg${i}][rodape${i}]overlay=x=0:y='if(lt(t,${inicio}),H,if(lt(t,${fim}),H-72,NAN))':enable='between(t,${inicio},${fim})'[out${i}]`
+      `${i === 0 ? '[0:v]' : `[out${i - 1}]`}[bgtrim${i}]overlay=x=0:y='if(lt(t\\,${inicio})\\,H\\,if(lt(t\\,${fim})\\,H-72\\,NAN))':enable='between(t\\,${inicio}\\,${fim})'[tmp${i}]`,
+      `[tmp${i}][rodape${i}]overlay=x=0:y='if(lt(t\\,${inicio})\\,H\\,if(lt(t\\,${fim})\\,H-72\\,NAN))':enable='between(t\\,${inicio}\\,${fim})'[out${i}]`
     );
-    anterior = `[out${i}]`;
   });
 
-  filtros.push(
-    `[2:v]scale=150:-1[logo]`,
-    `${anterior}[logo]overlay=W-w-10:10[final]`
-  );
+  if (exibirLogo) {
+    filtros.push(
+      `[2:v]scale=150:-1[logo]`,
+      `[out1][logo]overlay=W-w-10:10[final]`
+    );
+  } else {
+    filtros.push(`[out1]copy[final]`);
+  }
 
-  await executarFFmpeg([
+  const args = [
     '-i', input,
     '-i', rodape,
     '-i', logo,
@@ -149,8 +147,9 @@ async function aplicarRodapeELogoComGradiente(input, output, rodape, logo, tempo
     '-preset', 'veryfast',
     '-crf', '23',
     output
-  ]);
+  ];
 
+  await executarFFmpeg(args);
   registrarTemporario(output);
 }
 
@@ -181,18 +180,16 @@ async function unirVideos(lista, saida) {
     await baixarArquivo(logo_id, 'logo.png', auth);
     await baixarArquivo(video_principal, 'principal.mp4', auth);
 
-    const duracaoTotal = await obterDuracao('principal.mp4');
-    const meio = duracaoTotal / 2;
+    const duracao = await obterDuracao('principal.mp4');
+    const meio = duracao / 2;
 
     await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
     await reencode('parte1_raw.mp4', 'parte1_re.mp4');
     await reencode('parte2_raw.mp4', 'parte2_re.mp4');
 
-    const duracaoParte1 = await obterDuracao('parte1_re.mp4');
-    await aplicarRodapeELogoComGradiente('parte1_re.mp4', 'parte1_final.mp4', 'footer.png', 'logo.png', duracaoParte1);
-
-    const duracaoParte2 = await obterDuracao('parte2_re.mp4');
-    await aplicarRodapeELogoComGradiente('parte2_re.mp4', 'parte2_final.mp4', 'footer.png', 'logo.png', duracaoParte2);
+    // Aplica rodapé + logo fixo nas partes principais
+    await aplicarRodapeELogoComGradiente('parte1_re.mp4', 'parte1_final.mp4', 'footer.png', 'logo.png', duracao, true);
+    await aplicarRodapeELogoComGradiente('parte2_re.mp4', 'parte2_final.mp4', 'footer.png', 'logo.png', duracao, true);
 
     const videoIds = [
       video_inicial,
