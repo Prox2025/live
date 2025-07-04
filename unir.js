@@ -88,7 +88,7 @@ async function cortarVideo(input, out1, out2, meio) {
 async function reencode(input, output) {
   await executarFFmpeg([
     '-i', input,
-    '-vf', 'scale=if(gte(iw/ih,4/3),960,-1):if(gte(iw/ih,4/3),-1,720),crop=960:720',
+    '-vf', "scale='if(gte(iw/ih\\,4/3)\\,960\\,-1)':'if(gte(iw/ih\\,4/3)\\,-1\\,720)',crop=960:720",
     '-c:v', 'libx264',
     '-preset', 'veryfast',
     '-crf', '23',
@@ -98,51 +98,50 @@ async function reencode(input, output) {
   registrarTemporario(output);
 }
 
-function gerarTemposAleatoriosComIntervalo(duracao, quantidade, durRodape, intervaloMin = 120) {
+function gerarTemposAleatorios(duracao, duracaoRodape) {
   const tempos = [];
-  while (tempos.length < quantidade) {
-    const t = Math.floor(Math.random() * (duracao - durRodape - 5));
-    if (tempos.every(e => Math.abs(e - t) >= intervaloMin)) {
-      tempos.push(t);
-    }
+  const intervaloMin = 120;
+  const intervaloMax = 180;
+
+  let t = Math.floor(Math.random() * 30) + 10;
+  while (t + duracaoRodape < duracao) {
+    tempos.push(t);
+    t += Math.floor(Math.random() * (intervaloMax - intervaloMin)) + intervaloMin;
   }
-  tempos.sort((a, b) => a - b);
-  return tempos;
+  return tempos.slice(0, 2); // limitar a dois por parte
 }
 
-async function aplicarRodapeVideoReal(input, output, rodapeVideo, logo, duracaoPrincipal) {
-  const duracaoRodape = await obterDuracao(rodapeVideo);
-  const tempos = gerarTemposAleatoriosComIntervalo(duracaoPrincipal, 2, duracaoRodape);
+async function aplicarRodapeELogo(input, output, videoRodape, logo, duracaoParte) {
+  const durRodape = await obterDuracao(videoRodape);
+  const tempos = gerarTemposAleatorios(duracaoParte, durRodape);
   console.log(`🎞️ Aplicando rodapé nos tempos:`, tempos);
 
   const filtros = [];
-  let base = '[0:v]';
+  let inputIndex = 1;
 
-  tempos.forEach((inicio, i) => {
-    const fim = (inicio + duracaoRodape).toFixed(2);
-    filtros.push(
-      `[1:v]trim=start=0:duration=${duracaoRodape},setpts=PTS-STARTPTS[rodape${i}]`,
-      `[rodape${i}]scale=960:72[rodape_scaled${i}]`,
-      `[rodape_scaled${i}]format=rgba[rodape_f${i}]`,
-      `${base}[rodape_f${i}]overlay=0:H-72:enable='between(t,${inicio},${fim})'[tmp${i}]`
-    );
-    base = `[tmp${i}]`;
-  });
+  let overlayAnterior = '[0:v]';
+  for (let i = 0; i < tempos.length; i++) {
+    filtros.push(`[${inputIndex}:v]trim=start=0:duration=${durRodape},setpts=PTS-STARTPTS[rodape${i}]`);
+    filtros.push(`[rodape${i}]scale=720:-1[rodape_scaled${i}]`);
+    filtros.push(`${overlayAnterior}[rodape_scaled${i}]overlay=0:H-h:enable='between(t\\,${tempos[i]}\\,${(tempos[i] + durRodape).toFixed(2)})'[tmp${i}]`);
+    overlayAnterior = `[tmp${i}]`;
+    inputIndex++;
+  }
 
-  filtros.push(`[2:v]scale=150:-1[logo]`);
-  filtros.push(`${base}[logo]overlay=W-w-10:10[final]`);
+  filtros.push(`[${inputIndex}:v]scale=150:-1[logo]`);
+  filtros.push(`${overlayAnterior}[logo]overlay=W-w-10:10[final]`);
 
   const args = [
     '-i', input,
-    '-i', rodapeVideo,
+    ...tempos.map(() => ['-i', videoRodape]).flat(),
     '-i', logo,
     '-filter_complex', filtros.join('; '),
     '-map', '[final]',
     '-map', '0:a?',
     '-c:v', 'libx264',
-    '-c:a', 'aac',
     '-preset', 'veryfast',
     '-crf', '23',
+    '-c:a', 'aac',
     output
   ];
 
@@ -181,11 +180,12 @@ async function unirVideos(lista, saida) {
     const meio = duracao / 2;
 
     await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
+
     await reencode('parte1_raw.mp4', 'parte1_re.mp4');
     await reencode('parte2_raw.mp4', 'parte2_re.mp4');
 
-    await aplicarRodapeVideoReal('parte1_re.mp4', 'parte1_final.mp4', 'rodape_video.mp4', 'logo.png', meio);
-    await aplicarRodapeVideoReal('parte2_re.mp4', 'parte2_final.mp4', 'rodape_video.mp4', 'logo.png', duracao - meio);
+    await aplicarRodapeELogo('parte1_re.mp4', 'parte1_final.mp4', 'rodape_video.mp4', 'logo.png', meio);
+    await aplicarRodapeELogo('parte2_re.mp4', 'parte2_final.mp4', 'rodape_video.mp4', 'logo.png', duracao - meio);
 
     const videoIds = [
       video_inicial,
@@ -199,15 +199,11 @@ async function unirVideos(lista, saida) {
     for (let i = 0; i < videoIds.length; i++) {
       const idVideo = videoIds[i];
       if (!idVideo) continue;
-      if (idVideo.endsWith('.mp4') && fs.existsSync(idVideo)) {
-        arquivosProntos.push(idVideo);
-        continue;
-      }
       const raw = `video_${i}_raw.mp4`;
       const final = `video_${i}.mp4`;
       await baixarArquivo(idVideo, raw, auth);
       await reencode(raw, final);
-      arquivosProntos.push(final);
+      arquivosProntos.unshift(final); // ordem: extras antes das partes
     }
 
     await unirVideos(arquivosProntos, 'video_final_completo.mp4');
@@ -218,7 +214,6 @@ async function unirVideos(lista, saida) {
     }
 
     limparTemporarios();
-
   } catch (error) {
     console.error('🚨 ERRO:', error.message);
     limparTemporarios();
