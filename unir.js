@@ -40,7 +40,7 @@ async function autenticar() {
   console.log('🔐 Autenticando no Google Drive...');
   const auth = new google.auth.GoogleAuth({ keyFile, scopes: SCOPES });
   const client = await auth.getClient();
-  console.log('🔓 Autenticacao concluída com sucesso.');
+  console.log('🔓 Autenticação concluída com sucesso.');
   return client;
 }
 
@@ -86,11 +86,9 @@ async function cortarVideo(input, out1, out2, meio) {
 }
 
 async function reencode(input, output) {
-  // Redimensiona para 320x240 (4:3), para vídeos 426x240
-  const filtro = "scale='if(gt(a,4/3),-1,320)':'if(gt(a,4/3),240,-1)',crop=320:240";
   await executarFFmpeg([
     '-i', input,
-    '-vf', filtro,
+    '-vf', "scale=960:720",
     '-c:v', 'libx264',
     '-preset', 'veryfast',
     '-crf', '23',
@@ -112,25 +110,22 @@ function gerarTemposAleatorios(duracao, quantidade, intervaloMin, intervaloMax) 
 
 async function aplicarRodapeELogoComVideoRodape(input, output, rodapeVideo, logo, duracao) {
   const duracaoRodape = await obterDuracao(rodapeVideo);
-  const tempos = gerarTemposAleatorios(duracao, 2, 120, 180); // 2 a 3 minutos
+  const tempos = gerarTemposAleatorios(duracao, 2, 120, 180);
 
   console.log(`🎞️ Aplicando rodapé nos tempos:`, tempos);
 
-  // NOTA: Não redimensiona rodapeVideo (entrada 1)
-  // Logo (entrada 2) será escalado para largura máxima 150 px mantendo proporção
-  // Logo colocado no topo direito com margem 10px
-
   let filtros = '';
   let base = '[0:v]';
+
   tempos.forEach((inicio, i) => {
     const fim = (inicio + duracaoRodape).toFixed(3);
-    filtros += `[1:v]trim=start=0:duration=${duracaoRodape.toFixed(3)},setpts=PTS-STARTPTS[r${i}]; `;
+    filtros += `[1:v]setpts=PTS-STARTPTS[r${i}]; `;
     filtros += `${base}[r${i}]overlay=0:H-h:enable='between(t,${inicio},${fim})'[tmp${i}]; `;
     base = `[tmp${i}]`;
   });
 
-  filtros += `[2:v]scale='min(150,iw)':-1[logo_scaled]; `;
-  filtros += `${base}[logo_scaled]overlay=W-w-10:10[final]`;
+  filtros += `[2:v]scale=80:-1[logo]; `;
+  filtros += `${base}[logo]overlay=W-w-10:10[final]`;
 
   const args = [
     '-i', input,
