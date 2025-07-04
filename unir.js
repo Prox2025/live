@@ -88,7 +88,7 @@ async function cortarVideo(input, out1, out2, meio) {
 async function reencode(input, output) {
   await executarFFmpeg([
     '-i', input,
-    '-vf', 'scale=960:ih*960/iw,crop=960:720', // Proporção 4:3, zoom para preencher
+    '-vf', 'scale=if(gte(iw/ih,4/3),960,-1):if(gte(iw/ih,4/3),-1,720),crop=960:720',
     '-c:v', 'libx264',
     '-preset', 'veryfast',
     '-crf', '23',
@@ -98,37 +98,31 @@ async function reencode(input, output) {
   registrarTemporario(output);
 }
 
-function gerarTemposAleatoriosComIntervalo(duracao, quantidade, intervaloMin, intervaloMax) {
+function gerarTemposAleatoriosComIntervalo(duracao, quantidade, durRodape, intervaloMin = 120) {
   const tempos = [];
-  let tentativa = 0;
-
-  while (tempos.length < quantidade && tentativa < 1000) {
-    tentativa++;
-    const t = Math.floor(Math.random() * (duracao - 50));
-    if (
-      tempos.every(e => Math.abs(e - t) > intervaloMin && Math.abs(e - t) < intervaloMax)
-    ) {
+  while (tempos.length < quantidade) {
+    const t = Math.floor(Math.random() * (duracao - durRodape - 5));
+    if (tempos.every(e => Math.abs(e - t) >= intervaloMin)) {
       tempos.push(t);
     }
   }
-
   tempos.sort((a, b) => a - b);
   return tempos;
 }
 
 async function aplicarRodapeVideoReal(input, output, rodapeVideo, logo, duracaoPrincipal) {
   const duracaoRodape = await obterDuracao(rodapeVideo);
-  const tempos = gerarTemposAleatoriosComIntervalo(duracaoPrincipal, 2, duracaoRodape + 120, duracaoRodape + 180);
+  const tempos = gerarTemposAleatoriosComIntervalo(duracaoPrincipal, 2, duracaoRodape);
   console.log(`🎞️ Aplicando rodapé nos tempos:`, tempos);
 
   const filtros = [];
   let base = '[0:v]';
 
   tempos.forEach((inicio, i) => {
-    const fim = inicio + duracaoRodape;
+    const fim = (inicio + duracaoRodape).toFixed(2);
     filtros.push(
       `[1:v]trim=start=0:duration=${duracaoRodape},setpts=PTS-STARTPTS[rodape${i}]`,
-      `[rodape${i}]scale=720:72[rodape_scaled${i}]`,
+      `[rodape${i}]scale=960:72[rodape_scaled${i}]`,
       `[rodape_scaled${i}]format=rgba[rodape_f${i}]`,
       `${base}[rodape_f${i}]overlay=0:H-72:enable='between(t,${inicio},${fim})'[tmp${i}]`
     );
@@ -139,9 +133,9 @@ async function aplicarRodapeVideoReal(input, output, rodapeVideo, logo, duracaoP
   filtros.push(`${base}[logo]overlay=W-w-10:10[final]`);
 
   const args = [
-    '-i', input,           // [0:v] principal
-    '-i', rodapeVideo,     // [1:v] rodapé
-    '-i', logo,            // [2:v] logo
+    '-i', input,
+    '-i', rodapeVideo,
+    '-i', logo,
     '-filter_complex', filtros.join('; '),
     '-map', '[final]',
     '-map', '0:a?',
