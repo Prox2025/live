@@ -86,7 +86,7 @@ async function cortarVideo(input, out1, out2, meio) {
 }
 
 async function reencode(input, output) {
-  // Filtro atualizado para vídeo 426x240 convertendo para 320x240 (4:3)
+  // Redimensiona para 320x240 (4:3), para vídeos 426x240
   const filtro = "scale='if(gt(a,4/3),-1,320)':'if(gt(a,4/3),240,-1)',crop=320:240";
   await executarFFmpeg([
     '-i', input,
@@ -116,6 +116,10 @@ async function aplicarRodapeELogoComVideoRodape(input, output, rodapeVideo, logo
 
   console.log(`🎞️ Aplicando rodapé nos tempos:`, tempos);
 
+  // NOTA: Não redimensiona rodapeVideo (entrada 1)
+  // Logo (entrada 2) será escalado para largura máxima 150 px mantendo proporção
+  // Logo colocado no topo direito com margem 10px
+
   let filtros = '';
   let base = '[0:v]';
   tempos.forEach((inicio, i) => {
@@ -125,8 +129,8 @@ async function aplicarRodapeELogoComVideoRodape(input, output, rodapeVideo, logo
     base = `[tmp${i}]`;
   });
 
-  filtros += `[2:v]scale=150:-1[logo]; `;
-  filtros += `${base}[logo]overlay=W-w-10:10[final]`;
+  filtros += `[2:v]scale='min(150,iw)':-1[logo_scaled]; `;
+  filtros += `${base}[logo_scaled]overlay=W-w-10:10[final]`;
 
   const args = [
     '-i', input,
