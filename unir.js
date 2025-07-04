@@ -86,9 +86,11 @@ async function cortarVideo(input, out1, out2, meio) {
 }
 
 async function reencode(input, output) {
+  // FILTRO corrigido para zoom 4:3 sem barras pretas:
+  const filtro = "scale='if(gt(a,4/3),960,-1)':'if(gt(a,4/3),-1,720)',crop=960:720";
   await executarFFmpeg([
     '-i', input,
-    '-vf', "scale=if(gt(a\\,4/3)\\,960*ih/720\\,iw):if(gt(a\\,4/3)\\,ih\\,720*iw/960),crop=960:720",
+    '-vf', filtro,
     '-c:v', 'libx264',
     '-preset', 'veryfast',
     '-crf', '23',
