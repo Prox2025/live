@@ -88,7 +88,7 @@ async function cortarVideo(input, out1, out2, meio) {
 async function reencode(input, output) {
   await executarFFmpeg([
     '-i', input,
-    '-vf', 'scale=720:900,fps=30',
+    '-vf', 'scale=960:ih*960/iw,crop=960:720', // Proporção 4:3, zoom para preencher
     '-c:v', 'libx264',
     '-preset', 'veryfast',
     '-crf', '23',
@@ -127,7 +127,7 @@ async function aplicarRodapeVideoReal(input, output, rodapeVideo, logo, duracaoP
   tempos.forEach((inicio, i) => {
     const fim = inicio + duracaoRodape;
     filtros.push(
-      `${base}[1:v]trim=start=0:duration=${duracaoRodape},setpts=PTS-STARTPTS[rodape${i}]`,
+      `[1:v]trim=start=0:duration=${duracaoRodape},setpts=PTS-STARTPTS[rodape${i}]`,
       `[rodape${i}]scale=720:72[rodape_scaled${i}]`,
       `[rodape_scaled${i}]format=rgba[rodape_f${i}]`,
       `${base}[rodape_f${i}]overlay=0:H-72:enable='between(t,${inicio},${fim})'[tmp${i}]`
@@ -139,9 +139,9 @@ async function aplicarRodapeVideoReal(input, output, rodapeVideo, logo, duracaoP
   filtros.push(`${base}[logo]overlay=W-w-10:10[final]`);
 
   const args = [
-    '-i', input,
-    '-i', rodapeVideo,
-    '-i', logo,
+    '-i', input,           // [0:v] principal
+    '-i', rodapeVideo,     // [1:v] rodapé
+    '-i', logo,            // [2:v] logo
     '-filter_complex', filtros.join('; '),
     '-map', '[final]',
     '-map', '0:a?',
