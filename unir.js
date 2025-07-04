@@ -40,7 +40,7 @@ async function autenticar() {
   console.log('🔐 Autenticando no Google Drive...');
   const auth = new google.auth.GoogleAuth({ keyFile, scopes: SCOPES });
   const client = await auth.getClient();
-  console.log('🔓 Autenticação concluída com sucesso.');
+  console.log('🔓 Autenticacao concluída com sucesso.');
   return client;
 }
 
@@ -86,8 +86,8 @@ async function cortarVideo(input, out1, out2, meio) {
 }
 
 async function reencode(input, output) {
-  // FILTRO corrigido para zoom 4:3 sem barras pretas:
-  const filtro = "scale='if(gt(a,4/3),960,-1)':'if(gt(a,4/3),-1,720)',crop=960:720";
+  // Filtro atualizado para vídeo 426x240 convertendo para 320x240 (4:3)
+  const filtro = "scale='if(gt(a,4/3),-1,320)':'if(gt(a,4/3),240,-1)',crop=320:240";
   await executarFFmpeg([
     '-i', input,
     '-vf', filtro,
