@@ -98,65 +98,49 @@ async function reencode(input, output) {
   registrarTemporario(output);
 }
 
-function gerarTemposAleatorios(duracao, quantidade) {
+function gerarTemposAleatoriosComIntervalo(duracao, quantidade, intervaloMin, intervaloMax) {
   const tempos = [];
-  while (tempos.length < quantidade) {
+  let tentativa = 0;
+
+  while (tempos.length < quantidade && tentativa < 1000) {
+    tentativa++;
     const t = Math.floor(Math.random() * (duracao - 50));
-    if (!tempos.some(e => Math.abs(e - t) < 60)) tempos.push(t);
+    if (
+      tempos.every(e => Math.abs(e - t) > intervaloMin && Math.abs(e - t) < intervaloMax)
+    ) {
+      tempos.push(t);
+    }
   }
+
   tempos.sort((a, b) => a - b);
   return tempos;
 }
 
-// Função que cria o vídeo do rodapé (rodapé com fundo degradê animado)
-async function criarVideoRodape(rodapeImg, output, duracao) {
-  const filtros = [
-    `[0:v]scale=720:72,format=rgba,split=2[r0][r1]`,
-    `color=black@1.0:size=720x72:d=${duracao},format=rgba,lut=a='if(lt(y\\,10)\\,255\\,if(lt(y\\,20)\\,200\\,if(lt(y\\,30)\\,150\\,if(lt(y\\,40)\\,100\\,if(lt(y\\,50)\\,60\\,if(lt(y\\,60)\\,30\\,0)))))))[bg]'`,
-    `[r0][bg]overlay=format=auto[rodape]`
-  ];
-
-  const args = [
-    '-loop', '1',
-    '-i', rodapeImg,
-    '-f', 'lavfi',
-    '-t', duracao.toString(),
-    '-filter_complex', filtros.join(';'),
-    '-c:v', 'libx264',
-    '-preset', 'veryfast',
-    '-crf', '23',
-    '-pix_fmt', 'yuva420p',
-    output
-  ];
-
-  await executarFFmpeg(args);
-  registrarTemporario(output);
-}
-
-// Função que injeta o rodapé e o logo fixo nas partes principais
-async function aplicarRodapeELogoComVideoRodape(input, output, videoRodape, logo, duracao) {
-  const temposRodape = gerarTemposAleatorios(duracao, 2); // dois tempos aleatórios para o rodapé
-
-  console.log(`🎞️ Aplicando rodapé nos tempos:`, temposRodape);
+async function aplicarRodapeVideoReal(input, output, rodapeVideo, logo, duracaoPrincipal) {
+  const duracaoRodape = await obterDuracao(rodapeVideo);
+  const tempos = gerarTemposAleatoriosComIntervalo(duracaoPrincipal, 2, duracaoRodape + 120, duracaoRodape + 180);
+  console.log(`🎞️ Aplicando rodapé nos tempos:`, tempos);
 
   const filtros = [];
-  let videoBase = '[0:v]';
+  let base = '[0:v]';
 
-  temposRodape.forEach((inicio, i) => {
-    const fim = inicio + 40;
+  tempos.forEach((inicio, i) => {
+    const fim = inicio + duracaoRodape;
     filtros.push(
-      `${videoBase}[1:v]trim=start=${inicio}:duration=40,setpts=PTS-STARTPTS[rodape_trim${i}]`,
-      `[rodape_trim${i}]overlay=0:H-72:enable='between(t,${inicio},${fim})'[tmp${i}]`
+      `${base}[1:v]trim=start=0:duration=${duracaoRodape},setpts=PTS-STARTPTS[rodape${i}]`,
+      `[rodape${i}]scale=720:72[rodape_scaled${i}]`,
+      `[rodape_scaled${i}]format=rgba[rodape_f${i}]`,
+      `${base}[rodape_f${i}]overlay=0:H-72:enable='between(t,${inicio},${fim})'[tmp${i}]`
     );
-    videoBase = `[tmp${i}]`;
+    base = `[tmp${i}]`;
   });
 
   filtros.push(`[2:v]scale=150:-1[logo]`);
-  filtros.push(`${videoBase}[logo]overlay=W-w-10:10[final]`); // logo sempre visível
+  filtros.push(`${base}[logo]overlay=W-w-10:10[final]`);
 
   const args = [
     '-i', input,
-    '-i', videoRodape,
+    '-i', rodapeVideo,
     '-i', logo,
     '-filter_complex', filtros.join('; '),
     '-map', '[final]',
@@ -195,32 +179,20 @@ async function unirVideos(lista, saida) {
       videos_extras = [], video_inicial, video_miraplay, video_final, stream_url
     } = dados;
 
-    // Baixar arquivos necessários
-    await baixarArquivo(rodape_id, 'footer.png', auth);
+    await baixarArquivo(rodape_id, 'rodape_video.mp4', auth);
     await baixarArquivo(logo_id, 'logo.png', auth);
     await baixarArquivo(video_principal, 'principal.mp4', auth);
 
-    // Obter duração do vídeo principal
     const duracao = await obterDuracao('principal.mp4');
     const meio = duracao / 2;
 
-    // Cortar vídeo em 2 partes
     await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
-
-    // Reencode para padrão
     await reencode('parte1_raw.mp4', 'parte1_re.mp4');
     await reencode('parte2_raw.mp4', 'parte2_re.mp4');
 
-    // Criar vídeo do rodapé (com duração igual ao vídeo principal dividido)
-    // Aqui criamos um rodapé com duração suficiente para o vídeo inteiro (ou pelo menos a parte)
-    // Para simplicidade, criamos rodapé para duração do vídeo 1 e 2
-    await criarVideoRodape('footer.png', 'rodape_video.mp4', 40); // rodapé com 40 segundos (duração fixa para sobreposição)
+    await aplicarRodapeVideoReal('parte1_re.mp4', 'parte1_final.mp4', 'rodape_video.mp4', 'logo.png', meio);
+    await aplicarRodapeVideoReal('parte2_re.mp4', 'parte2_final.mp4', 'rodape_video.mp4', 'logo.png', duracao - meio);
 
-    // Aplica rodapé + logo fixo nas partes principais (1 e 2)
-    await aplicarRodapeELogoComVideoRodape('parte1_re.mp4', 'parte1_final.mp4', 'rodape_video.mp4', 'logo.png', meio);
-    await aplicarRodapeELogoComVideoRodape('parte2_re.mp4', 'parte2_final.mp4', 'rodape_video.mp4', 'logo.png', duracao - meio);
-
-    // Baixar e preparar vídeos extras
     const videoIds = [
       video_inicial,
       video_miraplay,
@@ -244,7 +216,6 @@ async function unirVideos(lista, saida) {
       arquivosProntos.push(final);
     }
 
-    // Unir todos os vídeos em sequência
     await unirVideos(arquivosProntos, 'video_final_completo.mp4');
 
     if (stream_url && id) {
