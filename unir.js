@@ -88,7 +88,7 @@ async function cortarVideo(input, out1, out2, meio) {
 async function reencode(input, output) {
   await executarFFmpeg([
     '-i', input,
-    '-vf', 'scale=1280:720',
+    '-vf', "scale=1280:720",
     '-c:v', 'libx264',
     '-preset', 'veryfast',
     '-crf', '23',
@@ -98,7 +98,7 @@ async function reencode(input, output) {
   registrarTemporario(output);
 }
 
-async function aplicarOverlayRodape(input, output, rodapeId, logoPath, tempos, auth) {
+async function aplicarOverlayRodape(input, output, rodapeId, logo, tempos, auth) {
   const drive = google.drive({ version: 'v3', auth });
   const info = await drive.files.get({ fileId: rodapeId, fields: 'mimeType,name' });
   const mime = info.data.mimeType;
@@ -109,9 +109,10 @@ async function aplicarOverlayRodape(input, output, rodapeId, logoPath, tempos, a
 
   const isImagem = mime.startsWith('image/');
   const rodapeFilter = isImagem
-    ? '[1:v]format=rgba[rod];'
-    : '[1:v]setpts=PTS-STARTPTS[rod];';
+    ? '[1:v]format=rgba[rod]'    // Sem escala para manter proporção original
+    : '[1:v]setpts=PTS-STARTPTS,scale=1280:720[rod]';
 
+  // Função para gerar expressão y de animação de entrada e saída do rodapé (de baixo pra cima e depois pra baixo)
   const yExpr = (t) =>
     `'if(between(t,${t},${t + 15}), if(lt(t,${t + 1}), H-(H-h)*(t-${t}), if(lt(t,${t + 14}), H-h, if(lt(t,${t + 15}), H-h+(H-h)*(t-${t + 14}), NAN))), NAN)'`;
 
@@ -127,7 +128,7 @@ async function aplicarOverlayRodape(input, output, rodapeId, logoPath, tempos, a
   const args = [
     '-i', input,
     '-i', nomeRodape,
-    '-i', logoPath,
+    '-i', logo,
     '-filter_complex', filtros,
     '-map', '[outv]',
     '-map', '0:a?',
@@ -166,7 +167,11 @@ async function unirVideos(lista, saida) {
       videos_extras = [], video_inicial, video_miraplay, video_final, stream_url
     } = dados;
 
-    // Baixar recursos principais
+    await baixarArquivo(rodape_id, 'rodape.temp', auth); // baixar para detectar tipo
+    const mimeRodape = (await google.drive({ version: 'v3', auth }).files.get({ fileId: rodape_id, fields: 'mimeType' })).data.mimeType;
+    fs.unlinkSync('rodape.temp'); // apaga temporário só para saber o tipo
+
+    // Baixar arquivos principais
     await baixarArquivo(logo_id, 'logo.png', auth);
     await baixarArquivo(video_principal, 'principal.mp4', auth);
 
@@ -174,12 +179,15 @@ async function unirVideos(lista, saida) {
     const meio = duracao / 2;
 
     await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
+
     await reencode('parte1_raw.mp4', 'parte1_720.mp4');
     await reencode('parte2_raw.mp4', 'parte2_720.mp4');
 
+    // Aplicar overlay com animação no rodapé e logo
     await aplicarOverlayRodape('parte1_720.mp4', 'parte1_final.mp4', rodape_id, 'logo.png', [180, 300], auth);
     await aplicarOverlayRodape('parte2_720.mp4', 'parte2_final.mp4', rodape_id, 'logo.png', [180, 300], auth);
 
+    // Montar lista dos vídeos extras com reencode
     const videoIds = [video_inicial, video_miraplay, ...videos_extras, video_inicial, video_final];
     const arquivosProntos = ['parte1_final.mp4'];
 
