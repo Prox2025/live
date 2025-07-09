@@ -98,30 +98,15 @@ async function reencode(input, output) {
 }
 
 async function aplicarOverlayRodape(input, output, rodape, logo, tempos) {
-  // tempos = [t1, t2] onde em t1 e t2 inicia o rodapé por 15s
-  const [t1, t2] = tempos;
-
-  // expressão dinâmica de Y: 
-  // - sobe de fora até H-h em 1s
-  // - fica estático por 13s
-  // - desce suavemente em 1s
-  const yExpr = (t) => `
-    if(between(t,${t},${t + 15}),
-      if(lt(t,${t + 1}), 
-         H - (H - h)*(t - ${t}),
-      if(lt(t,${t + 14}), 
-         H - h,
-      if(lt(t,${t + 15}), 
-         H - h + (H - h)*(t - ${t + 14}), NAN))),
-    NAN)
-  `.trim().replace(/\s+/g, ' ');
+  const yExpr = (t) =>
+    `'if(between(t,${t},${t + 15}), if(lt(t,${t + 1}), H-(H-h)*(t-${t}), if(lt(t,${t + 14}), H-h, if(lt(t,${t + 15}), H-h+(H-h)*(t-${t + 14}), NAN))), NAN)'`;
 
   const filtros = [
     '[0:v]scale=1280:720[base]',
     '[1:v]scale=1280:720[rod]',
     '[2:v]scale=100:100[logo]',
-    `[base][rod]overlay=0:${yExpr(t1)}[tmp1]`,
-    `[tmp1][rod]overlay=0:${yExpr(t2)}[tmp2]`,
+    `[base][rod]overlay=0:${yExpr(tempos[0])}[tmp1]`,
+    `[tmp1][rod]overlay=0:${yExpr(tempos[1])}[tmp2]`,
     `[tmp2][logo]overlay=W-w-20:20[outv]`
   ].join('; ');
 
@@ -181,11 +166,11 @@ async function unirVideos(lista, saida) {
     await reencode('parte1_raw.mp4', 'parte1_720.mp4');
     await reencode('parte2_raw.mp4', 'parte2_720.mp4');
 
-    // Overlays animados (rodapé + logo)
+    // Overlays animados
     await aplicarOverlayRodape('parte1_720.mp4', 'parte1_final.mp4', 'rodape.mp4', 'logo.png', [180, 300]);
     await aplicarOverlayRodape('parte2_720.mp4', 'parte2_final.mp4', 'rodape.mp4', 'logo.png', [180, 300]);
 
-    // Renderização dos vídeos extras
+    // Extras
     const videoIds = [video_inicial, video_miraplay, ...videos_extras, video_inicial, video_final];
     const arquivosProntos = ['parte1_final.mp4'];
 
@@ -201,10 +186,10 @@ async function unirVideos(lista, saida) {
 
     arquivosProntos.push('parte2_final.mp4');
 
-    // Concatena tudo
+    // Junta tudo
     await unirVideos(arquivosProntos, 'video_final_completo.mp4');
 
-    // Gera JSON de stream, se aplicável
+    // Info extra
     if (stream_url && id) {
       fs.writeFileSync('stream_info.json', JSON.stringify({ stream_url, id, video_id: id }, null, 2));
       console.log('💾 stream_info.json criado.');
