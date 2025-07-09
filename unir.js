@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
 const { google } = require('googleapis');
 
@@ -98,38 +99,56 @@ async function reencode(input, output) {
   registrarTemporario(output);
 }
 
-function gerarTemposAleatorios(duracao, quantidade, intervaloMin, intervaloMax) {
-  const tempos = [];
-  let tempoAtual = Math.floor(Math.random() * intervaloMin);
-  while (tempos.length < quantidade && tempoAtual + intervaloMin < duracao) {
-    tempos.push(tempoAtual);
-    tempoAtual += intervaloMin + Math.floor(Math.random() * (intervaloMax - intervaloMin));
-  }
-  return tempos;
-}
+async function aplicarRodapeELogoComVideoRodape(input, output, rodapeArquivo, logo, duracao) {
+  const ext = path.extname(rodapeArquivo).toLowerCase();
 
-async function aplicarRodapeELogoComVideoRodape(input, output, rodapeVideo, logo, duracao) {
-  const duracaoRodape = await obterDuracao(rodapeVideo);
-  const tempos = gerarTemposAleatorios(duracao, 2, 120, 180);
-
-  console.log(`🎞️ Aplicando rodapé nos tempos:`, tempos);
+  // Tempos fixos em segundos para o rodapé (3 min e 5 min)
+  const temposRodape = [180, 300];
+  const duracaoRodapeImg = 15; // duração rodapé imagem
 
   let filtros = '';
   let base = '[0:v]';
 
-  tempos.forEach((inicio, i) => {
-    const fim = (inicio + duracaoRodape).toFixed(3);
-    filtros += `[1:v]setpts=PTS-STARTPTS[r${i}]; `;
-    filtros += `${base}[r${i}]overlay=0:H-h:enable='between(t,${inicio},${fim})'[tmp${i}]; `;
-    base = `[tmp${i}]`;
-  });
+  if (ext === '.mp4') {
+    // Rodapé é vídeo
+    const duracaoRodapeVideo = await obterDuracao(rodapeArquivo);
 
+    temposRodape.forEach((inicio, i) => {
+      const fim = (inicio + duracaoRodapeVideo).toFixed(3);
+      filtros += `[1:v]setpts=PTS-STARTPTS[r${i}]; `;
+      filtros += `${base}[r${i}]overlay=0:H-h:enable='between(t,${inicio},${fim})'[tmp${i}]; `;
+      base = `[tmp${i}]`;
+    });
+
+  } else if (ext === '.png' || ext === '.jpg' || ext === '.jpeg') {
+    // Rodapé é imagem: simula animações entrada (fade in) e saída (fade out) + overlay fixo
+
+    temposRodape.forEach((inicio, i) => {
+      const entradaInicio = inicio;
+      const entradaFim = inicio + 2;
+      const exibicaoFim = inicio + 13;
+      const saidaFim = inicio + 15;
+
+      filtros += `[1:v]format=rgba,` +
+        `fade=t=in:st=${entradaInicio}:d=2:alpha=1,` +
+        `fade=t=out:st=${exibicaoFim}:d=2:alpha=1,` +
+        `scale=iw*0.6:-1[rodape${i}]; `;
+
+      filtros += `${base}[rodape${i}]overlay=0:H-h:enable='between(t,${entradaInicio},${saidaFim})'[tmp${i}]; `;
+      base = `[tmp${i}]`;
+    });
+
+  } else {
+    throw new Error(`Formato de rodapé não suportado: ${ext}`);
+  }
+
+  // Logo no canto superior direito (sempre)
   filtros += `[2:v]scale=80:-1[logo]; `;
   filtros += `${base}[logo]overlay=W-w-10:10[final]`;
 
   const args = [
     '-i', input,
-    '-i', rodapeVideo,
+    '-i', rodapeArquivo,
     '-i', logo,
     '-filter_complex', filtros,
     '-map', '[final]',
@@ -168,7 +187,9 @@ async function unirVideos(lista, saida) {
       videos_extras = [], video_inicial, video_miraplay, video_final, stream_url
     } = dados;
 
-    await baixarArquivo(rodape_id, 'rodape_video.mp4', auth);
+    await baixarArquivo(rodape_id, 'rodape_arquivo' + path.extname(rodape_id), auth);
+    const rodapeArquivoLocal = 'rodape_arquivo' + path.extname(rodape_id);
+
     await baixarArquivo(logo_id, 'logo.png', auth);
     await baixarArquivo(video_principal, 'principal.mp4', auth);
 
@@ -180,8 +201,9 @@ async function unirVideos(lista, saida) {
     await reencode('parte1_raw.mp4', 'parte1_re.mp4');
     await reencode('parte2_raw.mp4', 'parte2_re.mp4');
 
-    await aplicarRodapeELogoComVideoRodape('parte1_re.mp4', 'parte1_final.mp4', 'rodape_video.mp4', 'logo.png', meio);
-    await aplicarRodapeELogoComVideoRodape('parte2_re.mp4', 'parte2_final.mp4', 'rodape_video.mp4', 'logo.png', duracao - meio);
+    // Aplica rodapé e logo nas duas partes, nos minutos 3 e 5
+    await aplicarRodapeELogoComVideoRodape('parte1_re.mp4', 'parte1_final.mp4', rodapeArquivoLocal, 'logo.png', meio);
+    await aplicarRodapeELogoComVideoRodape('parte2_re.mp4', 'parte2_final.mp4', rodapeArquivoLocal, 'logo.png', duracao - meio);
 
     const videoIds = [video_inicial, video_miraplay, ...videos_extras, video_final];
     const arquivosProntos = ['parte1_final.mp4', 'parte2_final.mp4'];
