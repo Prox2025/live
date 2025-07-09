@@ -103,9 +103,11 @@ async function aplicarOverlayRodape(input, output, rodapePath, logoPath, tempos)
   const ext = path.extname(rodapePath).toLowerCase();
   const isImagem = ['.png', '.jpg', '.jpeg', '.webp'].includes(ext);
 
+  // Se for imagem, mantém escala do vídeo principal e aplica rodapé com formatação rgba
+  // Se for vídeo, mantem escala original do rodapé, sem forçar scale
   const rodapeInput = isImagem
     ? `[1:v]format=rgba,setpts=PTS-STARTPTS[rod]`
-    : `[1:v]scale=1280:720,setpts=PTS-STARTPTS[rod]`;
+    : `[1:v]setpts=PTS-STARTPTS[rod]`; // sem scale para vídeo
 
   const filtros = [
     `[0:v]scale=1280:720[base]`,
@@ -159,7 +161,9 @@ async function unirVideos(lista, saida) {
     } = dados;
 
     // Baixar arquivos do Drive
-    const rodapePath = rodape_id.endsWith('.mp4') ? 'rodape.mp4' : 'rodape.png';
+    const rodapeExt = path.extname(rodape_id).toLowerCase();
+    const rodapePath = ['.mp4', '.mov', '.webm'].includes(rodapeExt) ? 'rodape.mp4' : 'rodape.png';
+
     await baixarArquivo(rodape_id, rodapePath, auth);
     await baixarArquivo(logo_id, 'logo.png', auth);
     await baixarArquivo(video_principal, 'principal.mp4', auth);
