@@ -1,6 +1,7 @@
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { google } = require('googleapis');
+const path = require('path');
 
 const keyFile = process.env.KEYFILE || 'chave.json';
 const inputFile = process.env.INPUTFILE || 'input.json';
@@ -98,37 +99,27 @@ async function reencode(input, output) {
   registrarTemporario(output);
 }
 
-async function aplicarOverlayRodape(input, output, rodapeId, logo, tempos, auth) {
-  const drive = google.drive({ version: 'v3', auth });
-  const info = await drive.files.get({ fileId: rodapeId, fields: 'mimeType,name' });
-  const mime = info.data.mimeType;
-  const nomeRodape = mime.startsWith('image/') ? 'rodape.png' : 'rodape.mp4';
+async function aplicarOverlayRodape(input, output, rodapePath, logoPath, tempos) {
+  const ext = path.extname(rodapePath).toLowerCase();
+  const isImagem = ['.png', '.jpg', '.jpeg', '.webp'].includes(ext);
 
-  await baixarArquivo(rodapeId, nomeRodape, auth);
-  registrarTemporario(nomeRodape);
-
-  const isImagem = mime.startsWith('image/');
-  const rodapeFilter = isImagem
-    ? '[1:v]format=rgba[rod]'    // Sem escala para manter proporção original
-    : '[1:v]setpts=PTS-STARTPTS,scale=1280:720[rod]';
-
-  // Função para gerar expressão y de animação de entrada e saída do rodapé (de baixo pra cima e depois pra baixo)
-  const yExpr = (t) =>
-    `'if(between(t,${t},${t + 15}), if(lt(t,${t + 1}), H-(H-h)*(t-${t}), if(lt(t,${t + 14}), H-h, if(lt(t,${t + 15}), H-h+(H-h)*(t-${t + 14}), NAN))), NAN)'`;
+  const rodapeInput = isImagem
+    ? `[1:v]format=rgba,setpts=PTS-STARTPTS[rod]`
+    : `[1:v]scale=1280:720,setpts=PTS-STARTPTS[rod]`;
 
   const filtros = [
-    '[0:v]scale=1280:720[base]',
-    rodapeFilter,
-    '[2:v]scale=100:100[logo]',
-    `[base][rod]overlay=0:${yExpr(tempos[0])}[tmp1]`,
-    `[tmp1][rod]overlay=0:${yExpr(tempos[1])}[tmp2]`,
+    `[0:v]scale=1280:720[base]`,
+    rodapeInput,
+    `[2:v]scale=100:100[logo]`,
+    `[base][rod]overlay=0:'if(between(t,${tempos[0]},${tempos[0] + 15}), if(lt(t,${tempos[0] + 1}), H-(H-h)*(t-${tempos[0]}), if(lt(t,${tempos[1] - 1}), H-h, if(lt(t,${tempos[1]}), H-h+(H-h)*(t-${tempos[1] - 1}), NAN))), NAN)'[tmp1]`,
+    `[tmp1][rod]overlay=0:'if(between(t,${tempos[1]},${tempos[1] + 15}), if(lt(t,${tempos[1] + 1}), H-(H-h)*(t-${tempos[1]}), if(lt(t,${tempos[1] + 14}), H-h, if(lt(t,${tempos[1] + 15}), H-h+(H-h)*(t-${tempos[1] + 14}), NAN))), NAN)'[tmp2]`,
     `[tmp2][logo]overlay=W-w-20:20[outv]`
   ].join('; ');
 
   const args = [
     '-i', input,
-    '-i', nomeRodape,
-    '-i', logo,
+    '-i', rodapePath,
+    '-i', logoPath,
     '-filter_complex', filtros,
     '-map', '[outv]',
     '-map', '0:a?',
@@ -167,11 +158,9 @@ async function unirVideos(lista, saida) {
       videos_extras = [], video_inicial, video_miraplay, video_final, stream_url
     } = dados;
 
-    await baixarArquivo(rodape_id, 'rodape.temp', auth); // baixar para detectar tipo
-    const mimeRodape = (await google.drive({ version: 'v3', auth }).files.get({ fileId: rodape_id, fields: 'mimeType' })).data.mimeType;
-    fs.unlinkSync('rodape.temp'); // apaga temporário só para saber o tipo
-
-    // Baixar arquivos principais
+    // Baixar arquivos do Drive
+    const rodapePath = rodape_id.endsWith('.mp4') ? 'rodape.mp4' : 'rodape.png';
+    await baixarArquivo(rodape_id, rodapePath, auth);
     await baixarArquivo(logo_id, 'logo.png', auth);
     await baixarArquivo(video_principal, 'principal.mp4', auth);
 
@@ -183,11 +172,9 @@ async function unirVideos(lista, saida) {
     await reencode('parte1_raw.mp4', 'parte1_720.mp4');
     await reencode('parte2_raw.mp4', 'parte2_720.mp4');
 
-    // Aplicar overlay com animação no rodapé e logo
-    await aplicarOverlayRodape('parte1_720.mp4', 'parte1_final.mp4', rodape_id, 'logo.png', [180, 300], auth);
-    await aplicarOverlayRodape('parte2_720.mp4', 'parte2_final.mp4', rodape_id, 'logo.png', [180, 300], auth);
+    await aplicarOverlayRodape('parte1_720.mp4', 'parte1_final.mp4', rodapePath, 'logo.png', [180, 300]);
+    await aplicarOverlayRodape('parte2_720.mp4', 'parte2_final.mp4', rodapePath, 'logo.png', [180, 300]);
 
-    // Montar lista dos vídeos extras com reencode
     const videoIds = [video_inicial, video_miraplay, ...videos_extras, video_inicial, video_final];
     const arquivosProntos = ['parte1_final.mp4'];
 
