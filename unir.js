@@ -48,6 +48,7 @@ async function baixarArquivo(fileId, destino, auth) {
   console.log(`📥 Baixando do Drive ID: ${fileId} → ${destino}`);
   const drive = google.drive({ version: 'v3', auth });
   const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
+
   return new Promise((resolve, reject) => {
     const output = fs.createWriteStream(destino);
     res.data.pipe(output);
@@ -97,13 +98,26 @@ async function reencode(input, output) {
   registrarTemporario(output);
 }
 
-async function aplicarOverlayRodape(input, output, rodape, logo, tempos) {
+async function aplicarOverlayRodape(input, output, rodapeId, logoPath, tempos, auth) {
+  const drive = google.drive({ version: 'v3', auth });
+  const info = await drive.files.get({ fileId: rodapeId, fields: 'mimeType,name' });
+  const mime = info.data.mimeType;
+  const nomeRodape = mime.startsWith('image/') ? 'rodape.png' : 'rodape.mp4';
+
+  await baixarArquivo(rodapeId, nomeRodape, auth);
+  registrarTemporario(nomeRodape);
+
+  const isImagem = mime.startsWith('image/');
+  const rodapeFilter = isImagem
+    ? '[1:v]format=rgba[rod];'
+    : '[1:v]setpts=PTS-STARTPTS[rod];';
+
   const yExpr = (t) =>
     `'if(between(t,${t},${t + 15}), if(lt(t,${t + 1}), H-(H-h)*(t-${t}), if(lt(t,${t + 14}), H-h, if(lt(t,${t + 15}), H-h+(H-h)*(t-${t + 14}), NAN))), NAN)'`;
 
   const filtros = [
     '[0:v]scale=1280:720[base]',
-    '[1:v]scale=1280:720[rod]',
+    rodapeFilter,
     '[2:v]scale=100:100[logo]',
     `[base][rod]overlay=0:${yExpr(tempos[0])}[tmp1]`,
     `[tmp1][rod]overlay=0:${yExpr(tempos[1])}[tmp2]`,
@@ -112,8 +126,8 @@ async function aplicarOverlayRodape(input, output, rodape, logo, tempos) {
 
   const args = [
     '-i', input,
-    '-i', rodape,
-    '-i', logo,
+    '-i', nomeRodape,
+    '-i', logoPath,
     '-filter_complex', filtros,
     '-map', '[outv]',
     '-map', '0:a?',
@@ -152,25 +166,20 @@ async function unirVideos(lista, saida) {
       videos_extras = [], video_inicial, video_miraplay, video_final, stream_url
     } = dados;
 
-    // Downloads principais
-    await baixarArquivo(rodape_id, 'rodape.mp4', auth);
+    // Baixar recursos principais
     await baixarArquivo(logo_id, 'logo.png', auth);
     await baixarArquivo(video_principal, 'principal.mp4', auth);
 
-    // Corta ao meio
     const duracao = await obterDuracao('principal.mp4');
     const meio = duracao / 2;
-    await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
 
-    // Reencode das metades
+    await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
     await reencode('parte1_raw.mp4', 'parte1_720.mp4');
     await reencode('parte2_raw.mp4', 'parte2_720.mp4');
 
-    // Overlays animados
-    await aplicarOverlayRodape('parte1_720.mp4', 'parte1_final.mp4', 'rodape.mp4', 'logo.png', [180, 300]);
-    await aplicarOverlayRodape('parte2_720.mp4', 'parte2_final.mp4', 'rodape.mp4', 'logo.png', [180, 300]);
+    await aplicarOverlayRodape('parte1_720.mp4', 'parte1_final.mp4', rodape_id, 'logo.png', [180, 300], auth);
+    await aplicarOverlayRodape('parte2_720.mp4', 'parte2_final.mp4', rodape_id, 'logo.png', [180, 300], auth);
 
-    // Extras
     const videoIds = [video_inicial, video_miraplay, ...videos_extras, video_inicial, video_final];
     const arquivosProntos = ['parte1_final.mp4'];
 
@@ -186,10 +195,8 @@ async function unirVideos(lista, saida) {
 
     arquivosProntos.push('parte2_final.mp4');
 
-    // Junta tudo
     await unirVideos(arquivosProntos, 'video_final_completo.mp4');
 
-    // Info extra
     if (stream_url && id) {
       fs.writeFileSync('stream_info.json', JSON.stringify({ stream_url, id, video_id: id }, null, 2));
       console.log('💾 stream_info.json criado.');
