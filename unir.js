@@ -1,7 +1,6 @@
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { google } = require('googleapis');
-const path = require('path');
 
 const keyFile = process.env.KEYFILE || 'chave.json';
 const inputFile = process.env.INPUTFILE || 'input.json';
@@ -99,25 +98,22 @@ async function reencode(input, output) {
   registrarTemporario(output);
 }
 
-async function aplicarOverlayRodape(input, output, rodapePath, logoPath, tempos) {
-  // comando FFmpeg corrigido para filtro complexo sem espaços extras e labels consistentes
-  const filtros = `[0:v]scale=1280:720[base];` +
-    `[1:v]format=rgba,setpts=PTS-STARTPTS[rod];` +
-    `[2:v]scale=100:100[logo];` +
-    `[base][rod]overlay=0:'if(between(t,${tempos[0]},${tempos[0] + 15}), ` +
-    `if(lt(t,${tempos[0] + 1}), H-(H-h)*(t-${tempos[0]}), ` +
-    `if(lt(t,${tempos[1] - 1}), H-h, ` +
-    `if(lt(t,${tempos[1]}), H-h+(H-h)*(t-${tempos[1] - 1}), NAN))), NAN)'[tmp1];` +
-    `[tmp1][rod]overlay=0:'if(between(t,${tempos[1]},${tempos[1] + 15}), ` +
-    `if(lt(t,${tempos[1] + 1}), H-(H-h)*(t-${tempos[1]}), ` +
-    `if(lt(t,${tempos[1] + 14}), H-h, ` +
-    `if(lt(t,${tempos[1] + 15}), H-h+(H-h)*(t-${tempos[1] + 14}), NAN))), NAN)'[tmp2];` +
-    `[tmp2][logo]overlay=W-w-20:20[outv]`;
+async function aplicarOverlayRodape(input, output, rodape, logo) {
+  const rodapeDuracao = await obterDuracao(rodape);
+  const tempos = [180, 300]; // minuto 3 e 5
+
+  const filtros = [
+    `[0:v]scale=1280:720[base]`,
+    `[2:v]scale=100:100[logo]`,
+    `[base][1:v]overlay=0:H-h:enable='between(t,${tempos[0]},${tempos[0] + rodapeDuracao})'[tmp1]`,
+    `[tmp1][1:v]overlay=0:H-h:enable='between(t,${tempos[1]},${tempos[1] + rodapeDuracao})'[tmp2]`,
+    `[tmp2][logo]overlay=W-w-20:20[outv]`
+  ].join('; ');
 
   const args = [
-    '-i', input,
-    '-i', rodapePath,
-    '-i', logoPath,
+    '-i', input,     // vídeo base
+    '-i', rodape,    // rodapé (vídeo com proporção original)
+    '-i', logo,      // logotipo
     '-filter_complex', filtros,
     '-map', '[outv]',
     '-map', '0:a?',
@@ -156,9 +152,7 @@ async function unirVideos(lista, saida) {
       videos_extras = [], video_inicial, video_miraplay, video_final, stream_url
     } = dados;
 
-    // Baixar arquivos do Drive
-    const rodapePath = rodape_id.endsWith('.mp4') ? 'rodape.mp4' : 'rodape.png';
-    await baixarArquivo(rodape_id, rodapePath, auth);
+    await baixarArquivo(rodape_id, 'rodape.mp4', auth);
     await baixarArquivo(logo_id, 'logo.png', auth);
     await baixarArquivo(video_principal, 'principal.mp4', auth);
 
@@ -166,15 +160,22 @@ async function unirVideos(lista, saida) {
     const meio = duracao / 2;
 
     await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
-
     await reencode('parte1_raw.mp4', 'parte1_720.mp4');
     await reencode('parte2_raw.mp4', 'parte2_720.mp4');
 
-    await aplicarOverlayRodape('parte1_720.mp4', 'parte1_final.mp4', rodapePath, 'logo.png', [180, 300]);
-    await aplicarOverlayRodape('parte2_720.mp4', 'parte2_final.mp4', rodapePath, 'logo.png', [180, 300]);
+    await aplicarOverlayRodape('parte1_720.mp4', 'parte1_final.mp4', 'rodape.mp4', 'logo.png');
+    await aplicarOverlayRodape('parte2_720.mp4', 'parte2_final.mp4', 'rodape.mp4', 'logo.png');
 
-    const videoIds = [video_inicial, video_miraplay, ...videos_extras, video_inicial, video_final];
     const arquivosProntos = ['parte1_final.mp4'];
+
+    // Reencodar os vídeos intermediários (sem logo)
+    const videoIds = [
+      video_inicial,
+      video_miraplay,
+      ...videos_extras,
+      video_inicial, // repetido
+      video_final
+    ];
 
     for (let i = 0; i < videoIds.length; i++) {
       const idVideo = videoIds[i];
