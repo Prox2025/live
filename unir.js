@@ -89,15 +89,15 @@ async function reencode(input, output) {
   registrarTemporario(output);
 }
 
-async function aplicarLogoComRodape(input, output, logo, rodape, rodapeDuracaoSegundos) {
+async function aplicarLogoComRodape(input, output, logo, rodape, rodapeDuracao) {
   const start = 180;
-  const end = start + rodapeDuracaoSegundos;
+  const end = start + rodapeDuracao;
 
   const filtros = [
     '[0:v]format=rgba,split=2[base1][base2]',
     '[1:v]format=rgba,scale=iw*0.1:-1,setpts=PTS-STARTPTS[logov]',
     `[2:v]format=rgba,setpts=PTS-STARTPTS+${start}/TB[rodsrc]`,
-    '[rodsrc][base1]scale2ref=iw:-1[rodv][ref]',
+    '[rodsrc][base1]scale2ref=iw:-1[rodv]',
     '[base2][logov]overlay=W-w-20:20[tmpv]',
     `[tmpv][rodv]overlay=(W-w)/2:H-h-20:enable='between(t,${start},${end})'[outv]`
   ];
