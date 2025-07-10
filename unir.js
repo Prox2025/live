@@ -90,15 +90,16 @@ async function reencode(input, output) {
 }
 
 async function aplicarLogoComRodape(input, output, logo, rodape, rodapeDuracaoSegundos) {
-  const start = 180; // minuto 3
+  const start = 180;
   const end = start + rodapeDuracaoSegundos;
 
   const filtros = [
-    '[0:v]scale=1280:720[basev]',
-    '[1:v]scale=iw*0.1:-1,setpts=PTS-STARTPTS[logov]',
-    `[2:v]setpts=PTS-STARTPTS+${start}/TB[rodv]`,
+    '[0:v]format=rgba[basev]',
+    '[1:v]format=rgba,scale=iw*0.1:-1,setpts=PTS-STARTPTS[logov]',
+    `[2:v]format=rgba,setpts=PTS-STARTPTS+${start}/TB[rodsrc];`,
+    '[rodsrc][basev]scale2ref=oh*0.2:-1[rodv][ref]',
     '[basev][logov]overlay=W-w-20:20[tmpv]',
-    `[tmpv][rodv]overlay=10:H-h:enable='between(t,${start},${end})'[outv]`
+    `[tmpv][rodv]overlay=W-w-20:H-h-20:enable='between(t,${start},${end})'[outv]`
   ];
 
   const args = [
@@ -111,6 +112,7 @@ async function aplicarLogoComRodape(input, output, logo, rodape, rodapeDuracaoSe
     '-c:v', 'libx264',
     '-crf', '23',
     '-preset', 'veryfast',
+    '-pix_fmt', 'yuv420p',
     '-c:a', 'aac',
     '-y', output
   ];
@@ -151,7 +153,6 @@ async function unirVideos(lista, saida) {
     await baixarArquivo(video_principal, 'principal.mp4', auth);
 
     const rodapeDuracao = await obterDuracao('rodape.webm');
-
     const duracaoPrincipal = await obterDuracao('principal.mp4');
     const meio = duracaoPrincipal / 2;
 
