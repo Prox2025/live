@@ -80,10 +80,11 @@ async function reencode(input, output) {
   await executarFFmpeg([
     '-i', input,
     '-vf', 'scale=1280:720',
-    '-c:v', 'libx264',
-    '-preset', 'veryfast',
-    '-crf', '23',
-    '-c:a', 'aac',
+    '-c:v', 'libvpx-vp9',
+    '-pix_fmt', 'yuva420p',
+    '-crf', '30',
+    '-b:v', '0',
+    '-c:a', 'libopus',
     output
   ]);
   registrarTemporario(output);
@@ -107,11 +108,11 @@ async function aplicarLogoRodape(input, output, logo, rodape, duracaoRodape) {
     '-filter_complex', filtro.join(';'),
     '-map', '[outv]',
     '-map', '0:a?',
-    '-c:v', 'libx264',
-    '-crf', '23',
-    '-preset', 'veryfast',
-    '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac',
+    '-c:v', 'libvpx-vp9',
+    '-pix_fmt', 'yuva420p',
+    '-crf', '30',
+    '-b:v', '0',
+    '-c:a', 'libopus',
     '-y', output
   ];
 
@@ -159,25 +160,26 @@ async function unirVideos(lista, saida) {
     const duracaoRodape = await obterDuracao('rodape.webm');
 
     await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
-    await reencode('parte1_raw.mp4', 'parte1_720.mp4');
-    await reencode('parte2_raw.mp4', 'parte2_720.mp4');
+    await reencode('parte1_raw.mp4', 'parte1_720.webm');
+    await reencode('parte2_raw.mp4', 'parte2_720.webm');
 
-    await aplicarLogoRodape('parte1_720.mp4', 'parte1_final.mp4', 'logo.png', 'rodape.webm', duracaoRodape);
-    await aplicarLogoRodape('parte2_720.mp4', 'parte2_final.mp4', 'logo.png', 'rodape.webm', duracaoRodape);
+    await aplicarLogoRodape('parte1_720.webm', 'parte1_final.webm', 'logo.png', 'rodape.webm', duracaoRodape);
+    await aplicarLogoRodape('parte2_720.webm', 'parte2_final.webm', 'logo.png', 'rodape.webm', duracaoRodape);
 
     const videoIds = [video_inicial, video_miraplay, ...videos_extras, video_inicial, video_final];
-    const arquivos = ['parte1_final.mp4'];
+    const arquivos = ['parte1_final.webm'];
 
     for (let i = 0; i < videoIds.length; i++) {
       const id = videoIds[i];
       const nome = `video_extra_${i}`;
       await baixarArquivo(id, `${nome}_raw.mp4`, auth);
-      await reencode(`${nome}_raw.mp4`, `${nome}.mp4`);
-      arquivos.push(`${nome}.mp4`);
+      // Reencode para webm mantendo alfa (se precisar, mas vídeos extras podem não ter alfa)
+      await reencode(`${nome}_raw.mp4`, `${nome}.webm`);
+      arquivos.push(`${nome}.webm`);
     }
 
-    arquivos.push('parte2_final.mp4');
-    await unirVideos(arquivos, 'video_final_completo.mp4');
+    arquivos.push('parte2_final.webm');
+    await unirVideos(arquivos, 'video_final_completo.webm');
 
     if (stream_url && id) {
       fs.writeFileSync('stream_info.json', JSON.stringify({ stream_url, id, video_id: id }, null, 2));
