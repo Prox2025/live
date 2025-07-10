@@ -1,6 +1,7 @@
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { google } = require('googleapis');
+const path = require('path');
 
 const keyFile = process.env.KEYFILE || 'chave.json';
 const inputFile = process.env.INPUTFILE || 'input.json';
@@ -84,25 +85,26 @@ async function reencode(input, output) {
     '-preset', 'veryfast',
     '-crf', '23',
     '-c:a', 'aac',
+    '-y',
     output
   ]);
   registrarTemporario(output);
 }
 
-async function aplicarLogoComRodape(input, output, logo, rodape, rodapeDuracao) {
+async function aplicarLogoRodape(input, output, logo, rodape) {
+  const durRodape = await obterDuracao(rodape);
   const start = 180;
-  const end = start + rodapeDuracao;
+  const end = start + durRodape;
 
   const filtros = [
-    '[0:v]format=rgba,split=2[base1][base2]',
-    '[1:v]format=rgba,scale=iw*0.1:-1,setpts=PTS-STARTPTS[logov]',
-    `[2:v]format=rgba,setpts=PTS-STARTPTS+${start}/TB[rodsrc]`,
-    '[rodsrc][base1]scale2ref=iw:-1[rodv]',
-    '[base2][logov]overlay=W-w-20:20[tmpv]',
-    `[tmpv][rodv]overlay=(W-w)/2:H-h-20:enable='between(t,${start},${end})'[outv]`
+    '[0:v]format=rgba[base]',
+    '[1:v]format=rgba,scale=iw*0.12:-1,setpts=PTS-STARTPTS[logo]',
+    `[2:v]format=rgba,setpts=PTS-STARTPTS+${start}/TB[rodape]`,
+    `[base][logo]overlay=W-w-40:40[tmp]`,
+    `[tmp][rodape]overlay=(W-w)/2:H-h-20:enable='between(t,${start},${end})'[outv]`
   ];
 
-  const args = [
+  await executarFFmpeg([
     '-i', input,
     '-i', logo,
     '-i', rodape,
@@ -114,10 +116,10 @@ async function aplicarLogoComRodape(input, output, logo, rodape, rodapeDuracao) 
     '-preset', 'veryfast',
     '-pix_fmt', 'yuv420p',
     '-c:a', 'aac',
-    '-y', output
-  ];
+    '-y',
+    output
+  ]);
 
-  await executarFFmpeg(args);
   registrarTemporario(output);
 }
 
@@ -127,23 +129,27 @@ async function unirVideos(lista, saida) {
   registrarTemporario(txt);
   await executarFFmpeg(['-f', 'concat', '-safe', '0', '-i', txt, '-c', 'copy', saida]);
   console.log(`🎬 Vídeo final criado: ${saida}`);
+
+  const stats = fs.statSync(saida);
+  const sizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+  const duracao = await obterDuracao(saida);
+  console.log(`⏱️ Duração final: ${duracao.toFixed(2)}s`);
+  console.log(`📦 Tamanho final: ${sizeMB} MB`);
 }
 
+// PONTO DE ENTRADA
 (async () => {
   try {
     const auth = await autenticar();
     const dados = JSON.parse(fs.readFileSync(inputFile));
+
     const {
-      id, video_principal, logo_id, video_inicial,
-      video_miraplay, video_final, videos_extras = [],
-      stream_url, rodape_id
+      id, video_principal, logo_id,
+      video_inicial, video_miraplay, video_final,
+      rodape_id, videos_extras = [], stream_url
     } = dados;
 
-    const obrigatorios = {
-      video_principal, logo_id, video_inicial,
-      video_miraplay, video_final, rodape_id
-    };
-
+    const obrigatorios = { video_principal, logo_id, rodape_id, video_inicial, video_miraplay, video_final };
     const faltando = Object.entries(obrigatorios).filter(([_, v]) => !v);
     if (faltando.length)
       throw new Error('❌ input.json incompleto:\n' + faltando.map(([k]) => `- ${k}`).join('\n'));
@@ -152,7 +158,6 @@ async function unirVideos(lista, saida) {
     await baixarArquivo(rodape_id, 'rodape.webm', auth);
     await baixarArquivo(video_principal, 'principal.mp4', auth);
 
-    const rodapeDuracao = await obterDuracao('rodape.webm');
     const duracaoPrincipal = await obterDuracao('principal.mp4');
     const meio = duracaoPrincipal / 2;
 
@@ -160,8 +165,8 @@ async function unirVideos(lista, saida) {
     await reencode('parte1_raw.mp4', 'parte1_720.mp4');
     await reencode('parte2_raw.mp4', 'parte2_720.mp4');
 
-    await aplicarLogoComRodape('parte1_720.mp4', 'parte1_final.mp4', 'logo.png', 'rodape.webm', rodapeDuracao);
-    await aplicarLogoComRodape('parte2_720.mp4', 'parte2_final.mp4', 'logo.png', 'rodape.webm', rodapeDuracao);
+    await aplicarLogoRodape('parte1_720.mp4', 'parte1_final.mp4', 'logo.png', 'rodape.webm');
+    await aplicarLogoRodape('parte2_720.mp4', 'parte2_final.mp4', 'logo.png', 'rodape.webm');
 
     const videoIds = [video_inicial, video_miraplay, ...videos_extras, video_inicial, video_final];
     const arquivos = ['parte1_final.mp4'];
