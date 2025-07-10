@@ -11,10 +11,7 @@ function executarFFmpeg(args) {
   return new Promise((resolve, reject) => {
     console.log(`▶️ FFmpeg: ffmpeg ${args.join(' ')}`);
     const proc = spawn('ffmpeg', args, { stdio: 'inherit' });
-    proc.on('close', code => {
-      if (code === 0) resolve();
-      else reject(new Error(`🚨 ERRO: FFmpeg falhou (${code})`));
-    });
+    proc.on('close', code => code === 0 ? resolve() : reject(new Error(`🚨 ERRO: FFmpeg falhou (${code})`)));
   });
 }
 
@@ -24,30 +21,29 @@ function registrarTemporario(arquivo) {
 
 function limparTemporarios() {
   console.log('🧹 Limpando arquivos temporários...');
-  for (const arquivo of arquivosTemporarios) {
+  arquivosTemporarios.forEach(arquivo => {
     try {
       if (fs.existsSync(arquivo)) {
         fs.unlinkSync(arquivo);
         console.log(`🗑️ Removido: ${arquivo}`);
       }
     } catch (e) {
-      console.warn(`⚠️ Falha ao remover ${arquivo}:`, e.message);
+      console.warn(`⚠️ Falha ao remover ${arquivo}: ${e.message}`);
     }
-  }
+  });
 }
 
 async function autenticar() {
   const auth = new google.auth.GoogleAuth({ keyFile, scopes: SCOPES });
-  const client = await auth.getClient();
-  return client;
+  return await auth.getClient();
 }
 
-async function baixarArquivo(fileId, destino, auth) {
+async function baixarArquivo(id, destino, auth) {
   const drive = google.drive({ version: 'v3', auth });
-  const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
+  const res = await drive.files.get({ fileId: id, alt: 'media' }, { responseType: 'stream' });
   return new Promise((resolve, reject) => {
-    const output = fs.createWriteStream(destino);
-    res.data.pipe(output);
+    const out = fs.createWriteStream(destino);
+    res.data.pipe(out);
     res.data.on('end', () => {
       registrarTemporario(destino);
       resolve();
@@ -58,17 +54,17 @@ async function baixarArquivo(fileId, destino, auth) {
 
 function obterDuracao(video) {
   return new Promise((resolve, reject) => {
-    const ffprobe = spawn('ffprobe', [
+    const ff = spawn('ffprobe', [
       '-v', 'error',
       '-show_entries', 'format=duration',
       '-of', 'default=noprint_wrappers=1:nokey=1',
       video
     ]);
-    let output = '';
-    ffprobe.stdout.on('data', chunk => output += chunk.toString());
-    ffprobe.on('close', code => {
-      if (code === 0) resolve(parseFloat(output.trim()));
-      else reject(new Error('❌ ffprobe falhou'));
+    let data = '';
+    ff.stdout.on('data', chunk => data += chunk.toString());
+    ff.on('close', code => {
+      if (code === 0) resolve(parseFloat(data.trim()));
+      else reject(new Error('Erro ao obter duração'));
     });
   });
 }
@@ -93,43 +89,43 @@ async function reencode(input, output) {
   registrarTemporario(output);
 }
 
-async function aplicarRodape(input, output, rodape, logo, duracao, nomeParte) {
-  const tempos = [180, 300]; // Minuto 3 e 5
-  const comandos = [];
+async function aplicarRodapeELogo(input, output, rodapeVideo, logo, tempos, durRodape) {
+  const filtros = [];
+  filtros.push('[0:v]scale=1280:720[basev]');
+  filtros.push('[1:v]scale=1280:720[rodv]');
+  filtros.push('[2:v]scale=iw*0.1:-1,setpts=PTS-STARTPTS[logov]');
 
-  comandos.push(`[0:v]scale=1280:720[base];`);
-  comandos.push(`[1:v]scale=1280:720[rod];`);
-  comandos.push(`[2:v]scale=iw*0.1:-1,setpts=PTS-STARTPTS[logo];`);
+  let anterior = 'basev';
 
-  let anterior = 'base';
-  tempos.forEach((start, i) => {
-    const end = (start + duracao).toFixed(3);
-    comandos.push(`[${anterior}][rod]overlay=0:H-h:enable='between(t,${start},${end})'[tmp${i}];`);
+  tempos.forEach((inicio, i) => {
+    const fim = (inicio + durRodape).toFixed(3);
+    filtros.push(`[${anterior}][rodv]overlay=0:H-h:enable='between(t,${inicio},${fim})'[tmp${i}]`);
     anterior = `tmp${i}`;
   });
 
-  comandos.push(`[${anterior}][logo]overlay=W-w-20:20[outv]`);
+  filtros.push(`[${anterior}][logov]overlay=W-w-20:20[outv]`);
 
-  await executarFFmpeg([
+  const args = [
     '-i', input,
-    '-i', rodape,
+    '-i', rodapeVideo,
     '-i', logo,
-    '-filter_complex', comandos.join(' '),
+    '-filter_complex', filtros.join('; '),
     '-map', '[outv]',
     '-map', '0:a?',
     '-c:v', 'libx264',
-    '-preset', 'veryfast',
     '-crf', '23',
+    '-preset', 'veryfast',
     '-c:a', 'aac',
-    '-y',
-    output
-  ]);
+    '-y', output
+  ];
+
+  await executarFFmpeg(args);
   registrarTemporario(output);
 }
 
 async function unirVideos(lista, saida) {
   const txt = 'list.txt';
-  fs.writeFileSync(txt, lista.map(f => `file '${f}'`).join('\n'));
+  fs.writeFileSync(txt, lista.map(v => `file '${v}'`).join('\n'));
   registrarTemporario(txt);
   await executarFFmpeg(['-f', 'concat', '-safe', '0', '-i', txt, '-c', 'copy', saida]);
   console.log(`🎬 Vídeo final criado: ${saida}`);
@@ -139,16 +135,16 @@ async function unirVideos(lista, saida) {
   try {
     const auth = await autenticar();
     const dados = JSON.parse(fs.readFileSync(inputFile));
-
-    const obrigatorios = ['video_principal', 'logo_id', 'rodape_id', 'video_inicial', 'video_miraplay', 'video_final'];
-    const faltando = obrigatorios.filter(k => !dados[k]);
-    if (faltando.length) throw new Error('❌ input.json incompleto:\n' + faltando.map(f => `- ${f}`).join('\n'));
-
     const {
-      video_principal, logo_id, rodape_id,
+      id, video_principal, logo_id, rodape_id,
       video_inicial, video_miraplay, video_final,
-      videos_extras = []
+      videos_extras = [], stream_url
     } = dados;
+
+    const obrigatorios = { video_principal, logo_id, rodape_id, video_inicial, video_miraplay, video_final };
+    const faltando = Object.entries(obrigatorios).filter(([_, v]) => !v);
+    if (faltando.length)
+      throw new Error('❌ input.json incompleto:\n' + faltando.map(([k]) => `- ${k}`).join('\n'));
 
     await baixarArquivo(rodape_id, 'rodape.mp4', auth);
     await baixarArquivo(logo_id, 'logo.png', auth);
@@ -161,37 +157,34 @@ async function unirVideos(lista, saida) {
     await reencode('parte1_raw.mp4', 'parte1_720.mp4');
     await reencode('parte2_raw.mp4', 'parte2_720.mp4');
 
-    const rodapeDuracao = await obterDuracao('rodape.mp4');
+    const durRodape = await obterDuracao('rodape.mp4');
+    const tempos = [180, 300];
 
-    await aplicarRodape('parte1_720.mp4', 'parte1_final.mp4', 'rodape.mp4', 'logo.png', rodapeDuracao, 'parte1');
-    await aplicarRodape('parte2_720.mp4', 'parte2_final.mp4', 'rodape.mp4', 'logo.png', rodapeDuracao, 'parte2');
+    await aplicarRodapeELogo('parte1_720.mp4', 'parte1_final.mp4', 'rodape.mp4', 'logo.png', tempos, durRodape);
+    await aplicarRodapeELogo('parte2_720.mp4', 'parte2_final.mp4', 'rodape.mp4', 'logo.png', tempos, durRodape);
 
-    const ordemFinal = ['parte1_final.mp4'];
-    const baixarEReencodar = async (id, nome) => {
+    const videoIds = [video_inicial, video_miraplay, ...videos_extras, video_inicial, video_final];
+    const arquivos = ['parte1_final.mp4'];
+
+    for (let i = 0; i < videoIds.length; i++) {
+      const id = videoIds[i];
+      const nome = `video_extra_${i}`;
       await baixarArquivo(id, `${nome}_raw.mp4`, auth);
       await reencode(`${nome}_raw.mp4`, `${nome}.mp4`);
-      return `${nome}.mp4`;
-    };
-
-    ordemFinal.push(await baixarEReencodar(video_inicial, 'video_inicial_1'));
-    ordemFinal.push(await baixarEReencodar(video_miraplay, 'video_miraplay'));
-
-    for (let i = 0; i < videos_extras.length; i++) {
-      if (videos_extras[i]) {
-        ordemFinal.push(await baixarEReencodar(videos_extras[i], `extra${i}`));
-      }
+      arquivos.push(`${nome}.mp4`);
     }
 
-    ordemFinal.push(await baixarEReencodar(video_inicial, 'video_inicial_2'));
-    ordemFinal.push('parte2_final.mp4');
-    ordemFinal.push(await baixarEReencodar(video_final, 'video_final'));
+    arquivos.push('parte2_final.mp4');
+    await unirVideos(arquivos, 'video_final_completo.mp4');
 
-    await unirVideos(ordemFinal, 'video_final_completo.mp4');
+    if (stream_url && id) {
+      fs.writeFileSync('stream_info.json', JSON.stringify({ stream_url, id, video_id: id }, null, 2));
+      console.log('💾 stream_info.json criado.');
+    }
 
-    console.log('✅ Vídeo final salvo como video_final_completo.mp4');
     limparTemporarios();
-  } catch (err) {
-    console.error('🚨 ERRO:', err.message);
+  } catch (e) {
+    console.error('🚨 ERRO:', e.message);
     limparTemporarios();
     process.exit(1);
   }
