@@ -89,26 +89,19 @@ async function reencode(input, output) {
   registrarTemporario(output);
 }
 
-async function aplicarRodapeELogo(input, output, rodapeVideo, logo, tempos, durRodape) {
-  const filtros = [];
-  filtros.push('[0:v]scale=1280:720[basev]');
-  filtros.push('[1:v]scale=1280:720[rodv]');
-  filtros.push('[2:v]scale=iw*0.1:-1,setpts=PTS-STARTPTS[logov]');
-
-  let anterior = 'basev';
-
-  tempos.forEach((inicio, i) => {
-    const fim = (inicio + durRodape).toFixed(3);
-    filtros.push(`[${anterior}][rodv]overlay=0:H-h:enable='between(t,${inicio},${fim})'[tmp${i}]`);
-    anterior = `tmp${i}`;
-  });
-
-  filtros.push(`[${anterior}][logov]overlay=W-w-20:20[outv]`);
+async function aplicarLogoComRodape(input, output, logo, rodape) {
+  const filtros = [
+    '[0:v]scale=1280:720[basev]',
+    '[1:v]scale=iw*0.1:-1,setpts=PTS-STARTPTS[logov]',
+    '[2:v]setpts=PTS-STARTPTS+4/TB[rodv]',
+    '[basev][logov]overlay=W-w-20:20[tmpv]',
+    '[tmpv][rodv]overlay=0:H-h[outv]'
+  ];
 
   const args = [
     '-i', input,
-    '-i', rodapeVideo,
     '-i', logo,
+    '-i', rodape,
     '-filter_complex', filtros.join('; '),
     '-map', '[outv]',
     '-map', '0:a?',
@@ -136,20 +129,26 @@ async function unirVideos(lista, saida) {
     const auth = await autenticar();
     const dados = JSON.parse(fs.readFileSync(inputFile));
     const {
-      id, video_principal, logo_id, rodape_id,
-      video_inicial, video_miraplay, video_final,
-      videos_extras = [], stream_url
+      id, video_principal, logo_id, video_inicial,
+      video_miraplay, video_final, videos_extras = [],
+      stream_url, rodape_id
     } = dados;
 
-    const obrigatorios = { video_principal, logo_id, rodape_id, video_inicial, video_miraplay, video_final };
+    const obrigatorios = {
+      video_principal, logo_id, video_inicial,
+      video_miraplay, video_final, rodape_id
+    };
+
     const faltando = Object.entries(obrigatorios).filter(([_, v]) => !v);
     if (faltando.length)
       throw new Error('❌ input.json incompleto:\n' + faltando.map(([k]) => `- ${k}`).join('\n'));
 
-    await baixarArquivo(rodape_id, 'rodape.mp4', auth);
+    // Downloads
     await baixarArquivo(logo_id, 'logo.png', auth);
+    await baixarArquivo(rodape_id, 'rodape.webm', auth);
     await baixarArquivo(video_principal, 'principal.mp4', auth);
 
+    // Divisão
     const duracaoPrincipal = await obterDuracao('principal.mp4');
     const meio = duracaoPrincipal / 2;
 
@@ -157,12 +156,11 @@ async function unirVideos(lista, saida) {
     await reencode('parte1_raw.mp4', 'parte1_720.mp4');
     await reencode('parte2_raw.mp4', 'parte2_720.mp4');
 
-    const durRodape = await obterDuracao('rodape.mp4');
-    const tempos = [180, 300];
+    // Aplicar logo e rodape nas duas partes
+    await aplicarLogoComRodape('parte1_720.mp4', 'parte1_final.mp4', 'logo.png', 'rodape.webm');
+    await aplicarLogoComRodape('parte2_720.mp4', 'parte2_final.mp4', 'logo.png', 'rodape.webm');
 
-    await aplicarRodapeELogo('parte1_720.mp4', 'parte1_final.mp4', 'rodape.mp4', 'logo.png', tempos, durRodape);
-    await aplicarRodapeELogo('parte2_720.mp4', 'parte2_final.mp4', 'rodape.mp4', 'logo.png', tempos, durRodape);
-
+    // Vídeos extras
     const videoIds = [video_inicial, video_miraplay, ...videos_extras, video_inicial, video_final];
     const arquivos = ['parte1_final.mp4'];
 
