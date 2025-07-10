@@ -89,13 +89,16 @@ async function reencode(input, output) {
   registrarTemporario(output);
 }
 
-async function aplicarLogoComRodape(input, output, logo, rodape) {
+async function aplicarLogoComRodape(input, output, logo, rodape, rodapeDuracaoSegundos) {
+  const start = 180; // minuto 3
+  const end = start + rodapeDuracaoSegundos;
+
   const filtros = [
     '[0:v]scale=1280:720[basev]',
     '[1:v]scale=iw*0.1:-1,setpts=PTS-STARTPTS[logov]',
-    '[2:v]setpts=PTS-STARTPTS+4/TB[rodv]',
+    `[2:v]setpts=PTS-STARTPTS+${start}/TB[rodv]`,
     '[basev][logov]overlay=W-w-20:20[tmpv]',
-    '[tmpv][rodv]overlay=0:H-h[outv]'
+    `[tmpv][rodv]overlay=10:H-h:enable='between(t,${start},${end})'[outv]`
   ];
 
   const args = [
@@ -143,12 +146,12 @@ async function unirVideos(lista, saida) {
     if (faltando.length)
       throw new Error('❌ input.json incompleto:\n' + faltando.map(([k]) => `- ${k}`).join('\n'));
 
-    // Downloads
     await baixarArquivo(logo_id, 'logo.png', auth);
     await baixarArquivo(rodape_id, 'rodape.webm', auth);
     await baixarArquivo(video_principal, 'principal.mp4', auth);
 
-    // Divisão
+    const rodapeDuracao = await obterDuracao('rodape.webm');
+
     const duracaoPrincipal = await obterDuracao('principal.mp4');
     const meio = duracaoPrincipal / 2;
 
@@ -156,11 +159,9 @@ async function unirVideos(lista, saida) {
     await reencode('parte1_raw.mp4', 'parte1_720.mp4');
     await reencode('parte2_raw.mp4', 'parte2_720.mp4');
 
-    // Aplicar logo e rodape nas duas partes
-    await aplicarLogoComRodape('parte1_720.mp4', 'parte1_final.mp4', 'logo.png', 'rodape.webm');
-    await aplicarLogoComRodape('parte2_720.mp4', 'parte2_final.mp4', 'logo.png', 'rodape.webm');
+    await aplicarLogoComRodape('parte1_720.mp4', 'parte1_final.mp4', 'logo.png', 'rodape.webm', rodapeDuracao);
+    await aplicarLogoComRodape('parte2_720.mp4', 'parte2_final.mp4', 'logo.png', 'rodape.webm', rodapeDuracao);
 
-    // Vídeos extras
     const videoIds = [video_inicial, video_miraplay, ...videos_extras, video_inicial, video_final];
     const arquivos = ['parte1_final.mp4'];
 
