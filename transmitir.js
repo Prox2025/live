@@ -1,19 +1,15 @@
 const fs = require('fs');
-const path = require('path');
 const { spawn } = require('child_process');
 const puppeteer = require('puppeteer');
 
-const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL;
+const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL || '';
+const VIDEO_PATH = 'video_final_completo.mp4';
+const STREAM_INFO_PATH = 'stream_info.json';
 
-if (!SERVER_STATUS_URL) {
-  console.error('❌ Variável SERVER_STATUS_URL não definida');
-  process.exit(1);
-}
-
-async function enviarStatusPuppeteer(data) {
+async function enviarStatus(statusObj) {
   const browser = await puppeteer.launch({
     headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
   });
 
   try {
@@ -21,11 +17,9 @@ async function enviarStatusPuppeteer(data) {
     await page.emulateTimezone('Africa/Maputo');
 
     console.log(`🌐 Acessando API de status em ${SERVER_STATUS_URL}...`);
-    await page.goto(SERVER_STATUS_URL, {
-      waitUntil: 'networkidle2',
-      timeout: 60000
-    });
+    await page.goto(SERVER_STATUS_URL, { waitUntil: 'networkidle2', timeout: 60000 });
 
+    // Espera 3 segundos para garantir que a página esteja pronta
     await new Promise(r => setTimeout(r, 3000));
 
     const resposta = await page.evaluate(async (payload) => {
@@ -33,73 +27,67 @@ async function enviarStatusPuppeteer(data) {
         const res = await fetch(window.location.href, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
         });
         const texto = await res.text();
         return { status: res.status, texto };
-      } catch (e) {
-        return { status: 500, texto: 'Erro interno: ' + e.message };
+      } catch (err) {
+        return { status: 500, texto: 'Erro interno: ' + err.message };
       }
-    }, data);
+    }, statusObj);
 
-    console.log("📡 Resposta do servidor:", resposta);
+    console.log('📡 Resposta do servidor:', resposta);
     return resposta;
   } catch (err) {
-    console.error("❌ Erro ao enviar status:", err.message);
+    console.error('❌ Erro ao enviar status:', err.message);
     throw err;
   } finally {
     await browser.close();
   }
 }
 
-async function rodarFFmpeg(videoPath, streamUrl, id) {
+async function transmitirVideo(videoPath, streamUrl, id) {
   return new Promise((resolve, reject) => {
     const ffmpegArgs = [
-      '-i', videoPath,               // vídeo principal
-      '-i', 'logo.png',             // logo no canto superior direito
-      '-i', 'artefatos/rodape.webm', // rodapé transparente
-
-      '-filter_complex', `
-        [0:v]format=rgba[base];
-        [1:v]scale=-1:11[logo];
-        [2:v]format=rgba,setpts=PTS+240/TB[rodape];
-
-        [base][logo]overlay=W-w-10:10[tmp];
-        [tmp][rodape]overlay=(W-w)/2:H-h-5:enable='between(t,240,266)'[outv]
-      `.trim().replace(/\s+/g, ' '),
-
-      '-map', '[outv]',
-      '-map', '0:a?',
+      '-re',                 // lê em tempo real (simula streaming)
+      '-i', videoPath,
       '-c:v', 'libx264',
       '-preset', 'veryfast',
-      '-crf', '23',
+      '-crf', '18',
+      '-maxrate', '3500k',
+      '-bufsize', '7000k',
       '-pix_fmt', 'yuv420p',
+      '-g', '50',
       '-c:a', 'aac',
       '-b:a', '192k',
       '-ar', '44100',
       '-f', 'flv',
-      streamUrl
+      streamUrl,
     ];
 
+    console.log('▶️ Iniciando ffmpeg para transmissão...');
     const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
-    let notificadoInicio = false;
+    let notificouInicio = false;
+
     const notificarInicio = async () => {
-      if (!notificadoInicio) {
+      if (!notificouInicio) {
         try {
-          await enviarStatusPuppeteer({ id, status: 'started' });
+          await enviarStatus({ id, status: 'started' });
           console.log('✅ Notificado início da transmissão');
         } catch (e) {
           console.error('⚠️ Falha ao notificar início:', e.message);
         }
-        notificadoInicio = true;
+        notificouInicio = true;
       }
     };
 
+    // Notifica assim que ffmpeg começar a processar
     ffmpeg.stderr.once('data', () => {
       notificarInicio();
     });
 
+    // Fallback para notificar início após 60 segundos caso erro no evento
     const fallbackTimer = setTimeout(() => {
       notificarInicio();
     }, 60000);
@@ -109,27 +97,26 @@ async function rodarFFmpeg(videoPath, streamUrl, id) {
 
     ffmpeg.on('close', async (code) => {
       clearTimeout(fallbackTimer);
-
       if (code === 0) {
         try {
-          await enviarStatusPuppeteer({ id, status: 'finished' });
-          console.log('✅ Notificado término da transmissão com sucesso');
+          await enviarStatus({ id, status: 'finished' });
+          console.log('✅ Notificado término da transmissão');
         } catch (e) {
           console.error('⚠️ Falha ao notificar término:', e.message);
         }
         resolve();
       } else {
         try {
-          await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg saiu com código ${code}` });
+          await enviarStatus({ id, status: 'error', message: `ffmpeg saiu com código ${code}` });
         } catch (_) {}
-        reject(new Error(`ffmpeg erro ${code}`));
+        reject(new Error(`ffmpeg falhou com código ${code}`));
       }
     });
 
     ffmpeg.on('error', async (err) => {
       clearTimeout(fallbackTimer);
       try {
-        await enviarStatusPuppeteer({ id, status: 'error', message: err.message });
+        await enviarStatus({ id, status: 'error', message: err.message });
       } catch (_) {}
       reject(err);
     });
@@ -138,30 +125,23 @@ async function rodarFFmpeg(videoPath, streamUrl, id) {
 
 async function main() {
   try {
-    const streamInfoPath = path.join(process.cwd(), 'stream_info.json');
-    const videoPath = path.join(process.cwd(), 'video_final_completo.mp4');
+    if (!fs.existsSync(VIDEO_PATH)) throw new Error(`${VIDEO_PATH} não encontrado.`);
+    if (!fs.existsSync(STREAM_INFO_PATH)) throw new Error(`${STREAM_INFO_PATH} não encontrado.`);
 
-    if (!fs.existsSync(videoPath)) throw new Error('video_final_completo.mp4 não encontrado');
-    if (!fs.existsSync(streamInfoPath)) throw new Error('stream_info.json não encontrado');
-
-    const infoRaw = fs.readFileSync(streamInfoPath, 'utf-8');
-    let info;
+    const streamInfoRaw = fs.readFileSync(STREAM_INFO_PATH, 'utf-8');
+    let streamInfo;
     try {
-      info = JSON.parse(infoRaw);
+      streamInfo = JSON.parse(streamInfoRaw);
     } catch {
-      throw new Error('stream_info.json inválido');
+      throw new Error('stream_info.json inválido.');
     }
 
-    const { stream_url, id, video_id } = info;
-    const liveId = id || video_id;
+    const { stream_url, id } = streamInfo;
+    if (!stream_url) throw new Error('stream_url ausente em stream_info.json.');
+    if (!id) throw new Error('id ausente em stream_info.json.');
 
-    if (!stream_url) throw new Error('stream_url ausente no stream_info.json');
-    if (!liveId) throw new Error('id ausente no stream_info.json');
-
-    console.log(`🚀 Iniciando transmissão para ${stream_url} (id: ${liveId}) usando arquivo ${path.basename(videoPath)}`);
-
-    await rodarFFmpeg(videoPath, stream_url, liveId);
-
+    console.log(`🚀 Iniciando transmissão para ${stream_url} (id: ${id})`);
+    await transmitirVideo(VIDEO_PATH, stream_url, id);
   } catch (err) {
     console.error('💥 Erro fatal:', err.message);
     process.exit(1);
