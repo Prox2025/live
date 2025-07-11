@@ -80,23 +80,25 @@ async function reencode(input, output) {
   await executarFFmpeg([
     '-i', input,
     '-vf', 'scale=1280:720',
-    '-c:v', 'libvpx-vp9',
-    '-crf', '30',
-    '-b:v', '0',
-    '-pix_fmt', 'yuva420p',
-    '-c:a', 'libopus',
-    output
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '23',
+    '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac',
+    '-y', output
   ]);
   registrarTemporario(output);
 }
 
 async function aplicarLogoRodape(input, output, logo, rodape, duracaoRodape) {
-  // Logo com largura 11px, canto superior direito
-  // Rodapé transparente (preservando alfa), centralizado na parte inferior a partir dos 240s (4min)
+  // Rodapé transparente sobreposto sem canal alfa no output final
+  // Logo 11px largura canto superior direito
+  // Rodapé sobreposto a partir dos 240s (4min), centralizado inferior
+
   const filtro = [
-    '[0:v]format=rgba,scale=1280:720[base]',
-    '[1:v]format=rgba,scale=11:-1[logo]',
-    `[2:v]format=rgba,setpts=PTS-STARTPTS+240/TB[rodape]`,
+    '[0:v]scale=1280:720[base]',
+    '[1:v]scale=11:-1[logo]',
+    `[2:v]format=yuva420p,setpts=PTS-STARTPTS+240/TB[rodape]`,
     '[base][logo]overlay=W-w-11:11[tmp]',
     `[tmp][rodape]overlay=x=(W-w)/2:y=H-h:enable='gte(t,240)'[outv]`
   ];
@@ -108,11 +110,11 @@ async function aplicarLogoRodape(input, output, logo, rodape, duracaoRodape) {
     '-filter_complex', filtro.join(';'),
     '-map', '[outv]',
     '-map', '0:a?',
-    '-c:v', 'libvpx-vp9',
-    '-crf', '30',
-    '-b:v', '0',
-    '-pix_fmt', 'yuva420p',
-    '-c:a', 'libopus',
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '23',
+    '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac',
     '-y', output
   ];
 
@@ -121,21 +123,16 @@ async function aplicarLogoRodape(input, output, logo, rodape, duracaoRodape) {
 }
 
 async function unirVideos(lista, saida) {
-  // Criar arquivo de lista para concatenação
   const txt = 'list.txt';
   fs.writeFileSync(txt, lista.map(v => `file '${v}'`).join('\n'));
   registrarTemporario(txt);
 
-  // Concatenação com reencode para webm VP9 (concatenação com copy não funciona bem no webm vp9)
+  // Concatenação com copy, pois final é mp4
   await executarFFmpeg([
     '-f', 'concat',
     '-safe', '0',
     '-i', txt,
-    '-c:v', 'libvpx-vp9',
-    '-crf', '30',
-    '-b:v', '0',
-    '-pix_fmt', 'yuva420p',
-    '-c:a', 'libopus',
+    '-c', 'copy',
     '-y', saida
   ]);
   console.log(`🎬 Vídeo final criado: ${saida}`);
@@ -176,30 +173,30 @@ async function unirVideos(lista, saida) {
     console.log('✂️ Cortando vídeo principal ao meio...');
     await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
 
-    console.log('🎞️ Reencodificando partes para WebM VP9...');
-    await reencode('parte1_raw.mp4', 'parte1_720.webm');
-    await reencode('parte2_raw.mp4', 'parte2_720.webm');
+    console.log('🎞️ Reencodificando partes...');
+    await reencode('parte1_raw.mp4', 'parte1_720.mp4');
+    await reencode('parte2_raw.mp4', 'parte2_720.mp4');
 
-    console.log('🎨 Aplicando logo e rodapé com transparência nas partes...');
-    await aplicarLogoRodape('parte1_720.webm', 'parte1_final.webm', 'logo.png', 'rodape.webm', duracaoRodape);
-    await aplicarLogoRodape('parte2_720.webm', 'parte2_final.webm', 'logo.png', 'rodape.webm', duracaoRodape);
+    console.log('🎨 Aplicando logo e rodapé...');
+    await aplicarLogoRodape('parte1_720.mp4', 'parte1_final.mp4', 'logo.png', 'rodape.webm', duracaoRodape);
+    await aplicarLogoRodape('parte2_720.mp4', 'parte2_final.mp4', 'logo.png', 'rodape.webm', duracaoRodape);
 
     const videoIds = [video_inicial, video_miraplay, ...videos_extras, video_inicial, video_final];
-    const arquivos = ['parte1_final.webm'];
+    const arquivos = ['parte1_final.mp4'];
 
     for (let i = 0; i < videoIds.length; i++) {
       const vid = videoIds[i];
       const nome = `video_extra_${i}`;
       console.log(`⬇️ Baixando vídeo extra ${vid}...`);
       await baixarArquivo(vid, `${nome}_raw.mp4`, auth);
-      await reencode(`${nome}_raw.mp4`, `${nome}.webm`);
-      arquivos.push(`${nome}.webm`);
+      await reencode(`${nome}_raw.mp4`, `${nome}.mp4`);
+      arquivos.push(`${nome}.mp4`);
     }
 
-    arquivos.push('parte2_final.webm');
+    arquivos.push('parte2_final.mp4');
 
     console.log('🔗 Unindo todos os vídeos...');
-    await unirVideos(arquivos, 'video_final_completo.webm');
+    await unirVideos(arquivos, 'video_final_completo.mp4');
 
     if (stream_url && id) {
       fs.writeFileSync('stream_info.json', JSON.stringify({ stream_url, id, video_id: id }, null, 2));
