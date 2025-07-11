@@ -54,15 +54,18 @@ async function baixarArquivo(id, destino, auth) {
 }
 
 async function aplicarRodape(videoInput, videoOutput) {
+  // O rodapé aparece a partir do minuto 3 (180s)
+  // Overlay transparente posicionando no fundo do vídeo (bottom)
+  // Usa enable para ativar overlay somente após 180 segundos até o fim do rodapé
   await executarFFmpeg([
     '-i', videoInput,
     '-i', 'rodape.webm',
     '-filter_complex',
-    "[1:v]format=rgba[ov];[0:v][ov]overlay=0:H-h-20:enable='gte(t,180)':format=auto:shortest=1[outv]",
+    "[1:v]format=rgba[ov];[0:v][ov]overlay=0:H-h:enable='gte(t,180)':format=auto:shortest=1[outv]",
     '-map', '[outv]',
     '-map', '0:a?',
     '-c:v', 'libx264',
-    '-preset', 'ultrafast',
+    '-preset', 'veryfast',
     '-crf', '23',
     '-pix_fmt', 'yuv420p',
     '-c:a', 'aac',
@@ -79,7 +82,10 @@ async function main() {
 
   const arquivos = [];
 
-  console.log('⏬ Baixando vídeos na ordem correta...');
+  // Baixar vídeos na ordem:
+  // parte1 (com rodapé se tiver), video_inicial, video_miraplay, extras, video_inicial (repetido), parte2 (com rodapé se tiver), video_final
+
+  console.log('⏬ Baixando vídeos...');
   await baixarArquivo(input.video_principal, 'parte1_original.mp4', auth);
   await baixarArquivo(input.video_principal, 'parte2_original.mp4', auth);
 
@@ -128,45 +134,65 @@ async function main() {
     await baixarArquivo(input.logo_id, 'logo.png', auth);
   }
 
-  // Reencodificação para 1280x720
-  console.log('🎞️ Reencodificando vídeos...');
+  // Reencodar todos os vídeos para garantir mesmo tamanho, codec, etc.
+  console.log('🎞️ Reencodificando vídeos para 1280x720...');
   const convertidos = [];
-
-  for (const [index, original] of arquivos.entries()) {
-    const convertido = `convertido_${index}.mp4`;
+  for (const [idx, arq] of arquivos.entries()) {
+    const out = `convertido_${idx}.mp4`;
     await executarFFmpeg([
-      '-i', original,
+      '-i', arq,
       '-vf', 'scale=1280:720',
       '-c:v', 'libx264',
-      '-preset', 'ultrafast',
+      '-preset', 'veryfast',
       '-crf', '23',
       '-c:a', 'aac',
       '-b:a', '128k',
-      convertido
+      out
     ]);
-    registrarTemporario(convertido);
-    convertidos.push(convertido);
+    registrarTemporario(out);
+    convertidos.push(out);
   }
 
-  // Concatenar vídeos
-  const listaConcat = 'videos.txt';
-  fs.writeFileSync(listaConcat, convertidos.map(c => `file '${c}'`).join('\n'));
-  registrarTemporario(listaConcat);
+  // Concatenar vídeos com filter_complex concat (reencode)
+  console.log('🧩 Concatenando vídeos com filter_complex (reencode)...');
 
-  console.log('🧩 Unindo vídeos...');
-  await executarFFmpeg([
-    '-f', 'concat',
-    '-safe', '0',
-    '-i', listaConcat,
-    '-c', 'copy',
-    'video_unido.mp4'
-  ]);
+  // Criar inputs para filter_complex e maps para áudio/vídeo
+  const ffmpegArgs = [];
+  convertidos.forEach(c => {
+    ffmpegArgs.push('-i', c);
+  });
 
-  // Aplicar logo
+  // Construir filter_complex concat:
+  // Exemplo: [0:v:0][0:a:0][1:v:0][1:a:0]... concat=n=X:v=1:a=1[outv][outa]
+  const n = convertidos.length;
+  let filterComplex = '';
+  for (let i = 0; i < n; i++) {
+    filterComplex += `[${i}:v:0][${i}:a:0]`;
+  }
+  filterComplex += `concat=n=${n}:v=1:a=1[outv][outa]`;
+
+  const outputFinal = 'video_unido.mp4';
+
+  ffmpegArgs.push(
+    '-filter_complex', filterComplex,
+    '-map', '[outv]',
+    '-map', '[outa]',
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '23',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    outputFinal
+  );
+
+  await executarFFmpeg(ffmpegArgs);
+  registrarTemporario(outputFinal);
+
+  // Aplicar logo se existir
   if (fs.existsSync('logo.png')) {
     console.log('📎 Aplicando logo no canto superior direito...');
     await executarFFmpeg([
-      '-i', 'video_unido.mp4',
+      '-i', outputFinal,
       '-i', 'logo.png',
       '-filter_complex',
       '[1]scale=15:-1[logo];[0][logo]overlay=W-w-10:10',
@@ -174,13 +200,13 @@ async function main() {
       'video_final_completo.mp4'
     ]);
   } else {
-    fs.renameSync('video_unido.mp4', 'video_final_completo.mp4');
+    fs.renameSync(outputFinal, 'video_final_completo.mp4');
   }
 
-  // Salvar stream_info.json com os dados exatos do input + execução
+  // Criar stream_info.json
   const streamInfo = {
     id: input.id || null,
-    stream_url: input.stream_url || null,      // adiciona a URL de streaming
+    stream_url: input.stream_url || null,
     video: 'video_final_completo.mp4',
     resolucao: '1280x720',
     ordem: [
@@ -193,7 +219,6 @@ async function main() {
       'video_final'
     ]
   };
-
   fs.writeFileSync('stream_info.json', JSON.stringify(streamInfo, null, 2));
 
   console.log('✅ Vídeo final salvo como: video_final_completo.mp4');
