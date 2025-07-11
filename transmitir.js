@@ -26,7 +26,6 @@ async function enviarStatusPuppeteer(data) {
       timeout: 60000
     });
 
-    // Aguarda carregamento extra para garantir que tudo esteja pronto
     await new Promise(r => setTimeout(r, 3000));
 
     const resposta = await page.evaluate(async (payload) => {
@@ -53,110 +52,143 @@ async function enviarStatusPuppeteer(data) {
   }
 }
 
-async function rodarFFmpeg(videoPath, streamUrl, id) {
+async function rodarFFmpeg(videoPath, rodapePath, streamUrl, id) {
   return new Promise((resolve, reject) => {
-    const ffmpegArgs = [
-      '-i', videoPath,               // sem -re para leitura acelerada e garantir transmissão completa
-      '-c:v', 'libx264',
-      '-preset', 'veryfast',
-      '-crf', '18',
-      '-maxrate', '3500k',
-      '-bufsize', '7000k',
-      '-pix_fmt', 'yuv420p',
-      '-g', '50',
-      '-c:a', 'aac',
-      '-b:a', '192k',
-      '-ar', '44100',
-      '-f', 'flv',
-      streamUrl
-    ];
+    const filtro = [
+      '[0:v]format=rgba[video]',
+      '[1:v]format=rgba,setpts=PTS-STARTPTS+240/TB[rod]',
+      '[video][rod]overlay=(main_w-overlay_w)/2:main_h-overlay_h:enable=\'between(t,240,240+duracao_rodape)\''
+    ].join(';');
 
-    const ffmpeg = spawn('ffmpeg', ffmpegArgs);
-
-    let notificadoInicio = false;
-
-    const notificarInicio = async () => {
-      if (!notificadoInicio) {
-        try {
-          await enviarStatusPuppeteer({ id, status: 'started' });
-          console.log('✅ Notificado início da transmissão');
-        } catch (e) {
-          console.error('⚠️ Falha ao notificar início:', e.message);
-        }
-        notificadoInicio = true;
-      }
+    // Primeiro, obter a duração do vídeo de rodapé
+    const obterDuracaoRodape = () => {
+      return new Promise((resolve, reject) => {
+        const ffprobe = spawn('ffprobe', [
+          '-v', 'error',
+          '-show_entries', 'format=duration',
+          '-of', 'default=noprint_wrappers=1:nokey=1',
+          rodapePath
+        ]);
+        let data = '';
+        ffprobe.stdout.on('data', chunk => data += chunk.toString());
+        ffprobe.on('close', code => {
+          if (code === 0) resolve(parseFloat(data.trim()));
+          else reject(new Error('❌ Não foi possível obter duração do rodapé'));
+        });
+      });
     };
 
-    ffmpeg.stderr.once('data', () => {
-      notificarInicio();
-    });
+    obterDuracaoRodape().then(duracao => {
+      const filtroComTempo = filtro.replace(/duracao_rodape/g, duracao.toFixed(2));
 
-    const fallbackTimer = setTimeout(() => {
-      notificarInicio();
-    }, 60000);
+      const args = [
+        '-i', videoPath,
+        '-i', rodapePath,
+        '-filter_complex', filtroComTempo,
+        '-map', '[outv]',
+        '-map', '0:a?',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-crf', '18',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-ar', '44100',
+        '-f', 'flv',
+        '-map_metadata', '-1',
+        '-map_chapters', '-1',
+        '-y',
+        '-threads', '2',
+        '-shortest',
+        '-tune', 'zerolatency',
+        '-g', '50',
+        '-maxrate', '3500k',
+        '-bufsize', '7000k',
+        '-vf', 'format=yuv420p',
+        '-strict', '-2',
+        '-movflags', '+faststart',
+        '-metadata', 'title="Live Stream"',
+        streamUrl
+      ];
 
-    ffmpeg.stdout.on('data', data => process.stdout.write(data));
-    ffmpeg.stderr.on('data', data => process.stderr.write(data));
+      args.splice(args.indexOf('-filter_complex') + 2, 0, '-map', '[outv]');
 
-    ffmpeg.on('close', async (code) => {
-      clearTimeout(fallbackTimer);
+      const ffmpeg = spawn('ffmpeg', args);
 
-      if (code === 0) {
-        try {
-          await enviarStatusPuppeteer({ id, status: 'finished' });
-          console.log('✅ Notificado término da transmissão com sucesso');
-        } catch (e) {
-          console.error('⚠️ Falha ao notificar término:', e.message);
+      let notificadoInicio = false;
+
+      const notificarInicio = async () => {
+        if (!notificadoInicio) {
+          try {
+            await enviarStatusPuppeteer({ id, status: 'started' });
+            console.log('✅ Notificado início da transmissão');
+          } catch (e) {
+            console.error('⚠️ Falha ao notificar início:', e.message);
+          }
+          notificadoInicio = true;
         }
-        resolve();
-      } else {
-        try {
-          await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg saiu com código ${code}` });
-        } catch (_) {}
-        reject(new Error(`ffmpeg erro ${code}`));
-      }
-    });
+      };
 
-    ffmpeg.on('error', async (err) => {
-      clearTimeout(fallbackTimer);
-      try {
-        await enviarStatusPuppeteer({ id, status: 'error', message: err.message });
-      } catch (_) {}
-      reject(err);
-    });
+      ffmpeg.stderr.once('data', () => {
+        notificarInicio();
+      });
+
+      const fallbackTimer = setTimeout(() => {
+        notificarInicio();
+      }, 60000);
+
+      ffmpeg.stdout.on('data', data => process.stdout.write(data));
+      ffmpeg.stderr.on('data', data => process.stderr.write(data));
+
+      ffmpeg.on('close', async (code) => {
+        clearTimeout(fallbackTimer);
+        if (code === 0) {
+          try {
+            await enviarStatusPuppeteer({ id, status: 'finished' });
+            console.log('✅ Notificado término da transmissão com sucesso');
+          } catch (e) {
+            console.error('⚠️ Falha ao notificar término:', e.message);
+          }
+          resolve();
+        } else {
+          try {
+            await enviarStatusPuppeteer({ id, status: 'error', message: `ffmpeg saiu com código ${code}` });
+          } catch (_) {}
+          reject(new Error(`ffmpeg erro ${code}`));
+        }
+      });
+
+      ffmpeg.on('error', async (err) => {
+        clearTimeout(fallbackTimer);
+        try {
+          await enviarStatusPuppeteer({ id, status: 'error', message: err.message });
+        } catch (_) {}
+        reject(err);
+      });
+    }).catch(reject);
   });
 }
 
 async function main() {
   try {
-    const streamInfoPath = path.join(process.cwd(), 'stream_info.json');
-    const videoPathWebm = path.join(process.cwd(), 'video_final_completo.webm');
+    const base = process.cwd();
+    const streamInfoPath = path.join(base, 'stream_info.json');
+    const videoPath = path.join(base, 'video_final_completo.mp4');
+    const rodapePath = path.join(base, 'artefatos', 'rodape.webm');
 
-    if (!fs.existsSync(videoPathWebm)) {
-      throw new Error('video_final_completo.webm não encontrado');
-    }
+    if (!fs.existsSync(videoPath)) throw new Error('video_final_completo.mp4 não encontrado');
+    if (!fs.existsSync(streamInfoPath)) throw new Error('stream_info.json não encontrado');
+    if (!fs.existsSync(rodapePath)) throw new Error('rodape.webm não encontrado em artefatos');
 
-    if (!fs.existsSync(streamInfoPath)) {
-      throw new Error('stream_info.json não encontrado');
-    }
-
-    const infoRaw = fs.readFileSync(streamInfoPath, 'utf-8');
-    let info;
-    try {
-      info = JSON.parse(infoRaw);
-    } catch {
-      throw new Error('stream_info.json inválido');
-    }
-
+    const info = JSON.parse(fs.readFileSync(streamInfoPath, 'utf-8'));
     const { stream_url, id, video_id } = info;
     const liveId = id || video_id;
 
     if (!stream_url) throw new Error('stream_url ausente no stream_info.json');
     if (!liveId) throw new Error('id ausente no stream_info.json');
 
-    console.log(`🚀 Iniciando transmissão para ${stream_url} (id: ${liveId}) usando arquivo ${path.basename(videoPathWebm)}`);
-
-    await rodarFFmpeg(videoPathWebm, stream_url, liveId);
+    console.log(`🚀 Iniciando transmissão para ${stream_url} (id: ${liveId})`);
+    await rodarFFmpeg(videoPath, rodapePath, stream_url, liveId);
 
   } catch (err) {
     console.error('💥 Erro fatal:', err.message);
