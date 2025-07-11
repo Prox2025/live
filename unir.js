@@ -95,10 +95,11 @@ async function aplicarLogoERodape(input, output, logo, rodape, tempoRodape) {
   const filtros = [
     '[0:v]format=rgba,split=2[base1][base2]',
     '[1:v]format=rgba,scale=iw*0.1:-1,setpts=PTS-STARTPTS[logov]',
-    '[2:v]format=rgba,setpts=PTS-STARTPTS+' + tempoRodape + '/TB[rodsrc]',
-    '[rodsrc][base1]scale2ref=iw:-1[rodv][ref]',
+    `[2:v]format=rgba,setpts=PTS-STARTPTS+${tempoRodape}/TB[rodsrc]`,
+    // Escala rodape para largura do vídeo base1 (1280 px), mantém proporção
+    '[rodsrc]scale=1280:-1[rodv]',
     '[base2][logov]overlay=W-w-20:20[tmpv]',
-    "[tmpv][rodv]overlay=(W-w)/2:H-h-20:enable='between(t," + tempoRodape + "," + (tempoRodape + 26) + ")'[outv]"
+    `[tmpv][rodv]overlay=(W-w)/2:H-h-20:enable='between(t,${tempoRodape},${tempoRodape + 26})'[outv]`
   ];
 
   const args = [
@@ -112,7 +113,7 @@ async function aplicarLogoERodape(input, output, logo, rodape, tempoRodape) {
     '-b:v', '0',
     '-crf', '30',
     '-auto-alt-ref', '0',
-    '-pix_fmt', 'yuva420p',
+    '-pix_fmt', 'yuva420p',  // preserva transparência por causa do rodape
     '-c:a', 'libopus',
     '-y', output
   ];
@@ -152,24 +153,29 @@ async function unirVideos(lista, saida) {
     const meio = duracaoPrincipal / 2;
 
     await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
-    await reencode('parte1_raw.mp4', 'parte1_720.webm');
-    await reencode('parte2_raw.mp4', 'parte2_720.webm');
+    await reencode('parte1_raw.mp4', 'parte1_720.webm', false);
+    await reencode('parte2_raw.mp4', 'parte2_720.webm', false);
 
     await aplicarLogoERodape('parte1_720.webm', 'parte1_final.webm', 'logo.png', 'rodape.webm', 180);
     await aplicarLogoERodape('parte2_720.webm', 'parte2_final.webm', 'logo.png', 'rodape.webm', 180);
 
+    // Repetição intencional do vídeo inicial
     const videoIds = [video_inicial, video_miraplay, ...videos_extras, video_inicial, video_final];
     const arquivos = ['parte1_final.webm'];
 
     for (let i = 0; i < videoIds.length; i++) {
-      const id = videoIds[i];
+      const vid = videoIds[i];
       const nome = `video_extra_${i}`;
-      await baixarArquivo(id, `${nome}_raw.mp4`, auth);
-      await reencode(`${nome}_raw.mp4`, `${nome}.webm`);
+      await baixarArquivo(vid, `${nome}_raw.mp4`, auth);
+      await reencode(`${nome}_raw.mp4`, `${nome}.webm`, false);
       arquivos.push(`${nome}.webm`);
     }
 
     arquivos.push('parte2_final.webm');
+
+    console.log('🔗 Arquivos que serão concatenados:');
+    arquivos.forEach((f, i) => console.log(`  [${i}] ${f}`));
+
     await unirVideos(arquivos, 'video_final_completo.webm');
 
     if (stream_url && id) {
@@ -179,10 +185,12 @@ async function unirVideos(lista, saida) {
 
     const stats = fs.statSync('video_final_completo.webm');
     const duracaoFinal = await obterDuracao('video_final_completo.webm');
-    console.log(`⏱️ Duração final: ${duracaoFinal.toFixed(2)}s`);
-    console.log(`📦 Tamanho final: ${(stats.size / (1024 * 1024)).toFixed(2)} MB`);
+    console.log(`⏱️ Duração final do vídeo: ${duracaoFinal.toFixed(2)} segundos`);
+    console.log(`📦 Tamanho do arquivo final: ${(stats.size / (1024 * 1024)).toFixed(2)} MB`);
 
     limparTemporarios();
+
+    console.log('✅ Processo concluído com sucesso!');
   } catch (e) {
     console.error('🚨 ERRO:', e.message);
     limparTemporarios();
