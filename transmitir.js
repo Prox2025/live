@@ -6,6 +6,22 @@ const VIDEO_PATH = 'video_final_completo.mp4';
 const STREAM_INFO_PATH = 'stream_info.json';
 const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL || '';
 
+async function tentarEnviarStatus(statusObj, tentativasMax = 10, intervaloMs = 5000) {
+  for (let tentativa = 1; tentativa <= tentativasMax || tentativasMax === 0; tentativa++) {
+    try {
+      await enviarStatus(statusObj);
+      console.log(`✅ Status "${statusObj.status}" enviado com sucesso na tentativa ${tentativa}`);
+      return;
+    } catch (err) {
+      console.warn(`⚠️ Falha ao enviar status (tentativa ${tentativa}): ${err.message}`);
+      if (tentativasMax > 0 && tentativa >= tentativasMax) break;
+      await new Promise(r => setTimeout(r, intervaloMs));
+    }
+  }
+
+  console.error(`❌ Falha ao enviar status "${statusObj.status}" após ${tentativasMax} tentativas.`);
+}
+
 async function enviarStatus(statusObj) {
   const browser = await puppeteer.launch({
     headless: 'new',
@@ -36,9 +52,9 @@ async function enviarStatus(statusObj) {
     }, statusObj);
 
     console.log('📡 Resposta do servidor:', resposta);
-    return resposta;
+    if (resposta.status >= 200 && resposta.status < 300) return;
+    throw new Error('Servidor retornou erro: ' + resposta.status);
   } catch (err) {
-    console.error('❌ Erro ao enviar status:', err.message);
     throw err;
   } finally {
     await browser.close();
@@ -69,11 +85,11 @@ function transmitirParaFacebook(videoPath, streamUrl, id) {
     ffmpeg.on('close', async (code) => {
       if (code === 0) {
         console.log('✅ Transmissão finalizada com sucesso.');
-        await enviarStatus({ id, status: 'finished' });
+        await tentarEnviarStatus({ id, status: 'finished' }, 0); // tenta para sempre
         resolve();
       } else {
         console.error(`❌ FFmpeg finalizado com erro (código ${code})`);
-        await enviarStatus({ id, status: 'error', message: `FFmpeg finalizou com código ${code}` });
+        await tentarEnviarStatus({ id, status: 'error', message: `FFmpeg finalizou com código ${code}` }, 0);
         reject(new Error(`FFmpeg erro: código ${code}`));
       }
     });
@@ -100,7 +116,10 @@ async function iniciarTransmissao() {
   }
 
   try {
-    await enviarStatus({ id, status: 'started' });
+    // Envia status "started", continua mesmo que falhe
+    tentarEnviarStatus({ id, status: 'started' }, 0); // tenta indefinidamente
+
+    // Inicia transmissão
     await transmitirParaFacebook(VIDEO_PATH, streamUrl, id);
   } catch (err) {
     console.error('🚨 Erro durante a transmissão:', err.message);
