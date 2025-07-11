@@ -119,12 +119,12 @@ jobs:
       - name: 🧠 Executar script de montagem
         run: node unir.js
 
-      - name: 📤 Salvar vídeo final e stream_info como artifact
+      - name: 📤 Salvar vídeo final (.webm) e stream_info como artifact
         uses: actions/upload-artifact@v4
         with:
           name: video_final
           path: |
-            video_final_completo.mp4
+            video_final_completo.webm
             stream_info.json
 
   transmitir-video:
@@ -154,7 +154,7 @@ jobs:
       - name: 📝 Listar arquivos (debug opcional)
         run: ls -la
 
-      - name: ▶️ Transmitir vídeo final
+      - name: ▶️ Transmitir vídeo final (.webm)
         env:
           SERVER_STATUS_URL: ${{ secrets.SERVER_STATUS_URL }}
         run: node transmitir.js
