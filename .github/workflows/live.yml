@@ -14,7 +14,7 @@ on:
         type: string
 
       rodape_id:
-        description: 'ID do arquivo footer.png no Google Drive'
+        description: 'ID do arquivo footer (rodape.webm) no Google Drive'
         required: false
         type: string
 
@@ -72,15 +72,16 @@ jobs:
 
           async function baixarRodape() {
             const drive = google.drive({ version: 'v3', auth: await auth.getClient() });
-            const dest = fs.createWriteStream('footer.png');
+            const dest = fs.createWriteStream('artefatos/rodape.webm');
             const res = await drive.files.get(
               { fileId: '${{ inputs.rodape_id }}', alt: 'media' },
               { responseType: 'stream' }
             );
+            fs.mkdirSync('artefatos', { recursive: true });
             await new Promise((resolve, reject) => {
               res.data.pipe(dest).on('finish', resolve).on('error', reject);
             });
-            console.log('✅ footer.png baixado com sucesso!');
+            console.log('✅ rodape.webm baixado com sucesso!');
           }
 
           baixarRodape();
@@ -119,13 +120,14 @@ jobs:
       - name: 🧠 Executar script de montagem
         run: node unir.js
 
-      - name: 📤 Salvar vídeo final (.webm) e stream_info como artifact
+      - name: 📤 Salvar vídeo final (.mp4) e arquivos extras como artifact
         uses: actions/upload-artifact@v4
         with:
           name: video_final
           path: |
-            video_final_completo.webm
+            video_final_completo.mp4
             stream_info.json
+            artefatos/rodape.webm
 
   transmitir-video:
     runs-on: ubuntu-latest
@@ -149,12 +151,12 @@ jobs:
           path: video_final
 
       - name: 📂 Copiar arquivos para diretório atual
-        run: cp video_final/* .
+        run: cp -r video_final/* .
 
       - name: 📝 Listar arquivos (debug opcional)
         run: ls -la
 
-      - name: ▶️ Transmitir vídeo final (.webm)
+      - name: ▶️ Transmitir vídeo final (.mp4) com rodapé
         env:
           SERVER_STATUS_URL: ${{ secrets.SERVER_STATUS_URL }}
         run: node transmitir.js
