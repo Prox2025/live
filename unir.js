@@ -89,13 +89,33 @@ async function reencode(input, output) {
   registrarTemporario(output);
 }
 
+/**
+ * Aplica o logo e o rodapé em um vídeo de entrada.
+ * - Logo redimensionado para 15% da largura do vídeo (1280px).
+ * - Fundo semi-transparente cinza claro (RGBA ~90% transparente) atrás do rodapé para substituir fundo preto.
+ * - O rodapé aparece só durante sua duração (disable no final).
+ *
+ * @param {string} input Caminho do vídeo de entrada
+ * @param {string} output Caminho do vídeo de saída
+ * @param {string} logo Caminho da imagem do logo
+ * @param {string} rodape Caminho do vídeo do rodapé (com transparência)
+ * @param {number} duracaoRodape Duração do rodapé em segundos
+ */
 async function aplicarLogoRodape(input, output, logo, rodape, duracaoRodape) {
+  // cor de fundo RGBA, cinza claro com alpha 0.1 (~90% transparente)
+  // "0xC8C8C8" é o tom de cinza, @0.1 é transparência
   const filtro = [
-    '[0:v]scale=1280:720:flags=lanczos,format=rgba[base]',
-    '[1:v]scale=iw*0.08:-1[logo]',
-    `[2:v]scale=1280:-1:flags=lanczos,format=rgba,setpts=PTS-STARTPTS+240/TB[rodape]`,
-    '[base][logo]overlay=W-w-11:11[tmp1]',
-    `[tmp1][rodape]overlay=x=0:y=H-h:enable='gte(t,240)'[outv]`
+    `[0:v]scale=1280:720:flags=lanczos,format=rgba[base]`,
+    `[1:v]scale=iw*0.15:-1[logo]`, // logo 15% da largura do vídeo
+    // Cria um retângulo de fundo translúcido da largura do vídeo e altura ~108px (15% de 720)
+    `color=c=0xC8C8C8@0.1:s=1280x108:d=${duracaoRodape}[fundo]`,
+    `[2:v]scale=1280:-1:flags=lanczos,format=rgba,setpts=PTS-STARTPTS[rodape]`,
+    // Sobrepõe o fundo translúcido na base do vídeo
+    `[base][fundo]overlay=x=0:y=H-108[base_fundo]`,
+    // Sobrepõe o logo no canto superior direito com margens
+    `[base_fundo][logo]overlay=W-w-11:11[tmp1]`,
+    // Sobrepõe o rodapé no fundo+logo, habilitado só até a duração do rodapé
+    `[tmp1][rodape]overlay=x=0:y=H-h:enable='lte(t,${duracaoRodape})'[outv]`
   ];
 
   const args = [
@@ -121,6 +141,8 @@ async function unirVideos(lista, saida) {
   const txt = 'list.txt';
   fs.writeFileSync(txt, lista.map(v => `file '${v}'`).join('\n'));
   registrarTemporario(txt);
+
+  // Concatenar vídeos com cópia direta (sem re-encode)
   await executarFFmpeg(['-f', 'concat', '-safe', '0', '-i', txt, '-c', 'copy', saida]);
 
   console.log(`🎬 Vídeo final criado: ${saida}`);
