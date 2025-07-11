@@ -46,169 +46,162 @@ async function baixarArquivo(id, destino, auth) {
     res.data.pipe(out);
     res.data.on('end', () => {
       registrarTemporario(destino);
+      console.log(`📥 Baixado: ${destino}`);
       resolve();
     });
     res.data.on('error', reject);
   });
 }
 
-function obterDuracao(video) {
-  return new Promise((resolve, reject) => {
-    const ff = spawn('ffprobe', [
-      '-v', 'error',
-      '-show_entries', 'format=duration',
-      '-of', 'default=noprint_wrappers=1:nokey=1',
-      video
-    ]);
-    let data = '';
-    ff.stdout.on('data', chunk => data += chunk.toString());
-    ff.on('close', code => {
-      if (code === 0) resolve(parseFloat(data.trim()));
-      else reject(new Error('Erro ao obter duração'));
-    });
-  });
-}
-
-async function cortarVideo(input, out1, out2, meio) {
-  await executarFFmpeg(['-i', input, '-t', meio.toString(), '-c', 'copy', out1]);
-  await executarFFmpeg(['-i', input, '-ss', meio.toString(), '-c', 'copy', out2]);
-  registrarTemporario(out1);
-  registrarTemporario(out2);
-}
-
-async function reencode(input, output) {
+async function aplicarRodape(videoInput, videoOutput) {
   await executarFFmpeg([
-    '-i', input,
-    '-vf', 'scale=1280:720',
-    '-c:v', 'libx264',
-    '-preset', 'veryfast',
-    '-crf', '23',
-    '-c:a', 'aac',
-    output
-  ]);
-  registrarTemporario(output);
-}
-
-/**
- * Aplica o logo e o rodapé em um vídeo de entrada.
- * - Logo redimensionado para 15% da largura do vídeo (1280px).
- * - Fundo semi-transparente cinza claro (RGBA ~90% transparente) atrás do rodapé para substituir fundo preto.
- * - O rodapé aparece só durante sua duração (disable no final).
- *
- * @param {string} input Caminho do vídeo de entrada
- * @param {string} output Caminho do vídeo de saída
- * @param {string} logo Caminho da imagem do logo
- * @param {string} rodape Caminho do vídeo do rodapé (com transparência)
- * @param {number} duracaoRodape Duração do rodapé em segundos
- */
-async function aplicarLogoRodape(input, output, logo, rodape, duracaoRodape) {
-  // cor de fundo RGBA, cinza claro com alpha 0.1 (~90% transparente)
-  // "0xC8C8C8" é o tom de cinza, @0.1 é transparência
-  const filtro = [
-    `[0:v]scale=1280:720:flags=lanczos,format=rgba[base]`,
-    `[1:v]scale=iw*0.15:-1[logo]`, // logo 15% da largura do vídeo
-    // Cria um retângulo de fundo translúcido da largura do vídeo e altura ~108px (15% de 720)
-    `color=c=0xC8C8C8@0.1:s=1280x108:d=${duracaoRodape}[fundo]`,
-    `[2:v]scale=1280:-1:flags=lanczos,format=rgba,setpts=PTS-STARTPTS[rodape]`,
-    // Sobrepõe o fundo translúcido na base do vídeo
-    `[base][fundo]overlay=x=0:y=H-108[base_fundo]`,
-    // Sobrepõe o logo no canto superior direito com margens
-    `[base_fundo][logo]overlay=W-w-11:11[tmp1]`,
-    // Sobrepõe o rodapé no fundo+logo, habilitado só até a duração do rodapé
-    `[tmp1][rodape]overlay=x=0:y=H-h:enable='lte(t,${duracaoRodape})'[outv]`
-  ];
-
-  const args = [
-    '-i', input,
-    '-i', logo,
-    '-i', rodape,
-    '-filter_complex', filtro.join(';'),
+    '-i', videoInput,
+    '-i', 'rodape.webm',
+    '-filter_complex',
+    "[1:v]format=rgba[ov];[0:v][ov]overlay=0:H-h-20:enable='gte(t,180)':format=auto:shortest=1[outv]",
     '-map', '[outv]',
     '-map', '0:a?',
     '-c:v', 'libx264',
-    '-preset', 'veryfast',
+    '-preset', 'ultrafast',
     '-crf', '23',
     '-pix_fmt', 'yuv420p',
     '-c:a', 'aac',
-    '-y', output
-  ];
-
-  await executarFFmpeg(args);
-  registrarTemporario(output);
+    '-b:a', '128k',
+    '-ar', '44100',
+    videoOutput
+  ]);
+  registrarTemporario(videoOutput);
 }
 
-async function unirVideos(lista, saida) {
-  const txt = 'list.txt';
-  fs.writeFileSync(txt, lista.map(v => `file '${v}'`).join('\n'));
-  registrarTemporario(txt);
+async function main() {
+  const input = JSON.parse(fs.readFileSync(inputFile, 'utf8'));
+  const auth = await autenticar();
 
-  // Concatenar vídeos com cópia direta (sem re-encode)
-  await executarFFmpeg(['-f', 'concat', '-safe', '0', '-i', txt, '-c', 'copy', saida]);
+  const arquivos = [];
 
-  console.log(`🎬 Vídeo final criado: ${saida}`);
+  console.log('⏬ Baixando vídeos na ordem correta...');
+  await baixarArquivo(input.video_principal, 'parte1_original.mp4', auth);
+  await baixarArquivo(input.video_principal, 'parte2_original.mp4', auth);
 
-  const stats = fs.statSync(saida);
-  const tamanhoMB = (stats.size / (1024 * 1024)).toFixed(2);
-  const duracaoFinal = await obterDuracao(saida);
+  if (input.rodape_id) {
+    console.log('⏬ Baixando rodapé transparente (.webm)...');
+    await baixarArquivo(input.rodape_id, 'rodape.webm', auth);
 
-  console.log(`⏱️ Duração final: ${duracaoFinal.toFixed(2)}s`);
-  console.log(`📦 Tamanho final: ${tamanhoMB} MB`);
-}
+    console.log('🖼️ Aplicando rodapé em parte1...');
+    await aplicarRodape('parte1_original.mp4', 'parte1_com_rodape.mp4');
 
-(async () => {
-  try {
-    const auth = await autenticar();
-    const dados = JSON.parse(fs.readFileSync(inputFile));
+    console.log('🖼️ Aplicando rodapé em parte2...');
+    await aplicarRodape('parte2_original.mp4', 'parte2_com_rodape.mp4');
 
-    const {
-      id, video_principal, logo_id, rodape_id,
-      video_inicial, video_miraplay, video_final,
-      videos_extras = [], stream_url
-    } = dados;
-
-    const obrigatorios = { video_principal, logo_id, rodape_id, video_inicial, video_miraplay, video_final };
-    const faltando = Object.entries(obrigatorios).filter(([_, v]) => !v);
-    if (faltando.length)
-      throw new Error('❌ input.json incompleto:\n' + faltando.map(([k]) => `- ${k}`).join('\n'));
-
-    await baixarArquivo(logo_id, 'logo.png', auth);
-    await baixarArquivo(rodape_id, 'rodape.webm', auth);
-    await baixarArquivo(video_principal, 'principal.mp4', auth);
-
-    const duracaoPrincipal = await obterDuracao('principal.mp4');
-    const meio = duracaoPrincipal / 2;
-    const duracaoRodape = await obterDuracao('rodape.webm');
-
-    await cortarVideo('principal.mp4', 'parte1_raw.mp4', 'parte2_raw.mp4', meio);
-    await reencode('parte1_raw.mp4', 'parte1_720.mp4');
-    await reencode('parte2_raw.mp4', 'parte2_720.mp4');
-
-    await aplicarLogoRodape('parte1_720.mp4', 'parte1_final.mp4', 'logo.png', 'rodape.webm', duracaoRodape);
-    await aplicarLogoRodape('parte2_720.mp4', 'parte2_final.mp4', 'logo.png', 'rodape.webm', duracaoRodape);
-
-    const videoIds = [video_inicial, video_miraplay, ...videos_extras, video_inicial, video_final];
-    const arquivos = ['parte1_final.mp4'];
-
-    for (let i = 0; i < videoIds.length; i++) {
-      const vid = videoIds[i];
-      const nome = `video_extra_${i}`;
-      await baixarArquivo(vid, `${nome}_raw.mp4`, auth);
-      await reencode(`${nome}_raw.mp4`, `${nome}.mp4`);
-      arquivos.push(`${nome}.mp4`);
-    }
-
-    arquivos.push('parte2_final.mp4');
-    await unirVideos(arquivos, 'video_final_completo.mp4');
-
-    if (stream_url && id) {
-      fs.writeFileSync('stream_info.json', JSON.stringify({ stream_url, id, video_id: id }, null, 2));
-      console.log('💾 stream_info.json criado.');
-    }
-
-    limparTemporarios();
-  } catch (e) {
-    console.error('🚨 ERRO:', e.message);
-    limparTemporarios();
-    process.exit(1);
+    arquivos.push('parte1_com_rodape.mp4');
+  } else {
+    arquivos.push('parte1_original.mp4');
   }
-})();
+
+  await baixarArquivo(input.video_inicial, 'inicial1.mp4', auth);
+  arquivos.push('inicial1.mp4');
+
+  await baixarArquivo(input.video_miraplay, 'miraplay.mp4', auth);
+  arquivos.push('miraplay.mp4');
+
+  if (input.videos_extras && Array.isArray(input.videos_extras)) {
+    for (let i = 0; i < input.videos_extras.length && i < 5; i++) {
+      const nome = `extra${i + 1}.mp4`;
+      await baixarArquivo(input.videos_extras[i], nome, auth);
+      arquivos.push(nome);
+    }
+  }
+
+  await baixarArquivo(input.video_inicial, 'inicial2.mp4', auth);
+  arquivos.push('inicial2.mp4');
+
+  if (input.rodape_id) {
+    arquivos.push('parte2_com_rodape.mp4');
+  } else {
+    arquivos.push('parte2_original.mp4');
+  }
+
+  await baixarArquivo(input.video_final, 'final.mp4', auth);
+  arquivos.push('final.mp4');
+
+  if (input.logo_id) {
+    await baixarArquivo(input.logo_id, 'logo.png', auth);
+  }
+
+  // Reencodificação para 1280x720
+  console.log('🎞️ Reencodificando vídeos...');
+  const convertidos = [];
+
+  for (const [index, original] of arquivos.entries()) {
+    const convertido = `convertido_${index}.mp4`;
+    await executarFFmpeg([
+      '-i', original,
+      '-vf', 'scale=1280:720',
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-crf', '23',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      convertido
+    ]);
+    registrarTemporario(convertido);
+    convertidos.push(convertido);
+  }
+
+  // Concatenar vídeos
+  const listaConcat = 'videos.txt';
+  fs.writeFileSync(listaConcat, convertidos.map(c => `file '${c}'`).join('\n'));
+  registrarTemporario(listaConcat);
+
+  console.log('🧩 Unindo vídeos...');
+  await executarFFmpeg([
+    '-f', 'concat',
+    '-safe', '0',
+    '-i', listaConcat,
+    '-c', 'copy',
+    'video_unido.mp4'
+  ]);
+
+  // Aplicar logo
+  if (fs.existsSync('logo.png')) {
+    console.log('📎 Aplicando logo no canto superior direito...');
+    await executarFFmpeg([
+      '-i', 'video_unido.mp4',
+      '-i', 'logo.png',
+      '-filter_complex',
+      '[1]scale=15:-1[logo];[0][logo]overlay=W-w-10:10',
+      '-c:a', 'copy',
+      'video_final_completo.mp4'
+    ]);
+  } else {
+    fs.renameSync('video_unido.mp4', 'video_final_completo.mp4');
+  }
+
+  // Criar stream_info.json
+  const streamInfo = {
+    id: input.id,
+    data: new Date().toISOString(),
+    video: 'video_final_completo.mp4',
+    resolucao: '1280x720',
+    ordem: [
+      'parte1 (com rodapé)',
+      'video_inicial',
+      'video_miraplay',
+      ...(input.videos_extras || []).map((_, i) => `extra${i + 1}`),
+      'video_inicial (repetido)',
+      'parte2 (com rodapé)',
+      'video_final'
+    ]
+  };
+  fs.writeFileSync('stream_info.json', JSON.stringify(streamInfo, null, 2));
+
+  console.log('✅ Vídeo final salvo como: video_final_completo.mp4');
+  console.log('📄 stream_info.json criado com dados da execução.');
+
+  limparTemporarios();
+}
+
+main().catch(err => {
+  console.error('🚨 Erro fatal:', err);
+  process.exit(1);
+});
