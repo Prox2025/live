@@ -2,9 +2,9 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const puppeteer = require('puppeteer');
 
-const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL || '';
 const VIDEO_PATH = 'video_final_completo.mp4';
 const STREAM_INFO_PATH = 'stream_info.json';
+const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL || '';
 
 async function enviarStatus(statusObj) {
   const browser = await puppeteer.launch({
@@ -19,7 +19,6 @@ async function enviarStatus(statusObj) {
     console.log(`🌐 Acessando API de status em ${SERVER_STATUS_URL}...`);
     await page.goto(SERVER_STATUS_URL, { waitUntil: 'networkidle2', timeout: 60000 });
 
-    // Espera 3 segundos para garantir que a página esteja pronta
     await new Promise(r => setTimeout(r, 3000));
 
     const resposta = await page.evaluate(async (payload) => {
@@ -46,106 +45,67 @@ async function enviarStatus(statusObj) {
   }
 }
 
-async function transmitirVideo(videoPath, streamUrl, id) {
+function transmitirParaFacebook(videoPath, streamUrl, id) {
   return new Promise((resolve, reject) => {
-    const ffmpegArgs = [
-      '-re',                 // lê em tempo real (simula streaming)
+    const args = [
+      '-re',
       '-i', videoPath,
       '-c:v', 'libx264',
       '-preset', 'veryfast',
-      '-crf', '18',
-      '-maxrate', '3500k',
-      '-bufsize', '7000k',
+      '-maxrate', '3000k',
+      '-bufsize', '6000k',
       '-pix_fmt', 'yuv420p',
       '-g', '50',
       '-c:a', 'aac',
-      '-b:a', '192k',
+      '-b:a', '128k',
       '-ar', '44100',
       '-f', 'flv',
-      streamUrl,
+      streamUrl
     ];
 
-    console.log('▶️ Iniciando ffmpeg para transmissão...');
-    const ffmpeg = spawn('ffmpeg', ffmpegArgs);
-
-    let notificouInicio = false;
-
-    const notificarInicio = async () => {
-      if (!notificouInicio) {
-        try {
-          await enviarStatus({ id, status: 'started' });
-          console.log('✅ Notificado início da transmissão');
-        } catch (e) {
-          console.error('⚠️ Falha ao notificar início:', e.message);
-        }
-        notificouInicio = true;
-      }
-    };
-
-    // Notifica assim que ffmpeg começar a processar
-    ffmpeg.stderr.once('data', () => {
-      notificarInicio();
-    });
-
-    // Fallback para notificar início após 60 segundos caso erro no evento
-    const fallbackTimer = setTimeout(() => {
-      notificarInicio();
-    }, 60000);
-
-    ffmpeg.stdout.on('data', data => process.stdout.write(data));
-    ffmpeg.stderr.on('data', data => process.stderr.write(data));
+    console.log(`🚀 Iniciando transmissão para: ${streamUrl}`);
+    const ffmpeg = spawn('ffmpeg', args, { stdio: 'inherit' });
 
     ffmpeg.on('close', async (code) => {
-      clearTimeout(fallbackTimer);
       if (code === 0) {
-        try {
-          await enviarStatus({ id, status: 'finished' });
-          console.log('✅ Notificado término da transmissão');
-        } catch (e) {
-          console.error('⚠️ Falha ao notificar término:', e.message);
-        }
+        console.log('✅ Transmissão finalizada com sucesso.');
+        await enviarStatus({ id, status: 'finished' });
         resolve();
       } else {
-        try {
-          await enviarStatus({ id, status: 'error', message: `ffmpeg saiu com código ${code}` });
-        } catch (_) {}
-        reject(new Error(`ffmpeg falhou com código ${code}`));
+        console.error(`❌ FFmpeg finalizado com erro (código ${code})`);
+        await enviarStatus({ id, status: 'error', message: `FFmpeg finalizou com código ${code}` });
+        reject(new Error(`FFmpeg erro: código ${code}`));
       }
-    });
-
-    ffmpeg.on('error', async (err) => {
-      clearTimeout(fallbackTimer);
-      try {
-        await enviarStatus({ id, status: 'error', message: err.message });
-      } catch (_) {}
-      reject(err);
     });
   });
 }
 
-async function main() {
+async function iniciarTransmissao() {
+  if (!fs.existsSync(STREAM_INFO_PATH)) {
+    console.error(`❌ Arquivo ${STREAM_INFO_PATH} não encontrado.`);
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(VIDEO_PATH)) {
+    console.error(`❌ Arquivo de vídeo ${VIDEO_PATH} não encontrado.`);
+    process.exit(1);
+  }
+
+  const streamInfo = JSON.parse(fs.readFileSync(STREAM_INFO_PATH, 'utf-8'));
+  const { stream_url: streamUrl, id } = streamInfo;
+
+  if (!streamUrl || !streamUrl.startsWith('rtmp')) {
+    console.error('❌ stream_url inválido no stream_info.json');
+    process.exit(1);
+  }
+
   try {
-    if (!fs.existsSync(VIDEO_PATH)) throw new Error(`${VIDEO_PATH} não encontrado.`);
-    if (!fs.existsSync(STREAM_INFO_PATH)) throw new Error(`${STREAM_INFO_PATH} não encontrado.`);
-
-    const streamInfoRaw = fs.readFileSync(STREAM_INFO_PATH, 'utf-8');
-    let streamInfo;
-    try {
-      streamInfo = JSON.parse(streamInfoRaw);
-    } catch {
-      throw new Error('stream_info.json inválido.');
-    }
-
-    const { stream_url, id } = streamInfo;
-    if (!stream_url) throw new Error('stream_url ausente em stream_info.json.');
-    if (!id) throw new Error('id ausente em stream_info.json.');
-
-    console.log(`🚀 Iniciando transmissão para ${stream_url} (id: ${id})`);
-    await transmitirVideo(VIDEO_PATH, stream_url, id);
+    await enviarStatus({ id, status: 'started' });
+    await transmitirParaFacebook(VIDEO_PATH, streamUrl, id);
   } catch (err) {
-    console.error('💥 Erro fatal:', err.message);
+    console.error('🚨 Erro durante a transmissão:', err.message);
     process.exit(1);
   }
 }
 
-main();
+iniciarTransmissao();
