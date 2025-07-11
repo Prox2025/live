@@ -177,22 +177,23 @@ async function main() {
     fs.renameSync('video_unido.mp4', 'video_final_completo.mp4');
   }
 
-  // Criar stream_info.json
+  // Salvar stream_info.json com os dados exatos do input + execução
   const streamInfo = {
-    id: input.id,
-    data: new Date().toISOString(),
+    id: input.id || null,
+    stream_url: input.stream_url || null,      // adiciona a URL de streaming
     video: 'video_final_completo.mp4',
     resolucao: '1280x720',
     ordem: [
-      'parte1 (com rodapé)',
+      input.rodape_id ? 'parte1 (com rodapé)' : 'parte1',
       'video_inicial',
       'video_miraplay',
       ...(input.videos_extras || []).map((_, i) => `extra${i + 1}`),
       'video_inicial (repetido)',
-      'parte2 (com rodapé)',
+      input.rodape_id ? 'parte2 (com rodapé)' : 'parte2',
       'video_final'
     ]
   };
+
   fs.writeFileSync('stream_info.json', JSON.stringify(streamInfo, null, 2));
 
   console.log('✅ Vídeo final salvo como: video_final_completo.mp4');
