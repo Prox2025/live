@@ -26,7 +26,6 @@ async function enviarStatusPuppeteer(data) {
       timeout: 60000
     });
 
-    // Aguarda carregamento extra para garantir que tudo esteja pronto
     await new Promise(r => setTimeout(r, 3000));
 
     const resposta = await page.evaluate(async (payload) => {
@@ -55,31 +54,25 @@ async function enviarStatusPuppeteer(data) {
 
 async function rodarFFmpeg(videoPath, rodapePath, streamUrl, id) {
   return new Promise((resolve, reject) => {
-    // O rodapé aparece entre o minuto 4 (240s) até 4:26 (240 + 26s)
-    const inicioRodape = 240;
-    const duracaoRodape = 26;
-
     const ffmpegArgs = [
-      '-i', videoPath,         // vídeo principal (.mp4)
-      '-i', rodapePath,        // rodapé transparente (.webm)
+      '-re', // envia o vídeo em tempo real (obrigatório para live)
+      '-i', videoPath,
+      '-i', rodapePath,
       '-filter_complex',
-      `[1:v]format=rgba[rod];[0:v][rod]overlay=(W-w)/2:H-h-30:enable='between(t,${inicioRodape},${inicioRodape + duracaoRodape})'[vout]`,
-      '-map', '[vout]',
-      '-map', '0:a?',          // áudio do vídeo principal, se houver
+      "[1:v]scale=iw*0.3:-1[rod];[0:v][rod]overlay=W-w-20:H-h-20:enable='between(t,240,266)'",
       '-c:v', 'libx264',
-      '-crf', '23',
       '-preset', 'veryfast',
+      '-crf', '23',
+      '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
       '-b:a', '192k',
       '-ar', '44100',
       '-g', '50',
-      '-pix_fmt', 'yuv420p',
       '-f', 'flv',
       streamUrl
     ];
 
-    console.log(`▶️ ffmpeg ${ffmpegArgs.join(' ')}`);
-
+    console.log(`▶️ FFmpeg: ffmpeg ${ffmpegArgs.join(' ')}`);
     const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
     let notificadoInicio = false;
@@ -109,7 +102,6 @@ async function rodarFFmpeg(videoPath, rodapePath, streamUrl, id) {
 
     ffmpeg.on('close', async (code) => {
       clearTimeout(fallbackTimer);
-
       if (code === 0) {
         try {
           await enviarStatusPuppeteer({ id, status: 'finished' });
@@ -138,10 +130,9 @@ async function rodarFFmpeg(videoPath, rodapePath, streamUrl, id) {
 
 async function main() {
   try {
-    const cwd = process.cwd();
-    const streamInfoPath = path.join(cwd, 'stream_info.json');
-    const videoPath = path.join(cwd, 'video_final_completo.mp4');
-    const rodapePath = path.join(cwd, 'artefatos/rodape.webm');
+    const streamInfoPath = path.join(process.cwd(), 'stream_info.json');
+    const videoPath = path.join(process.cwd(), 'video_final_completo.mp4');
+    const rodapePath = path.join(process.cwd(), 'artefatos/rodape.webm');
 
     if (!fs.existsSync(videoPath)) {
       throw new Error('video_final_completo.mp4 não encontrado');
@@ -152,7 +143,7 @@ async function main() {
     }
 
     if (!fs.existsSync(rodapePath)) {
-      throw new Error('artefatos/rodape.webm não encontrado');
+      throw new Error('rodape.webm não encontrado');
     }
 
     const infoRaw = fs.readFileSync(streamInfoPath, 'utf-8');
@@ -169,10 +160,9 @@ async function main() {
     if (!stream_url) throw new Error('stream_url ausente no stream_info.json');
     if (!liveId) throw new Error('id ausente no stream_info.json');
 
-    console.log(`🚀 Iniciando transmissão para ${stream_url} (id: ${liveId}) usando arquivo ${path.basename(videoPath)}`);
+    console.log(`🚀 Iniciando transmissão para ${stream_url} (id: ${liveId})`);
 
     await rodarFFmpeg(videoPath, rodapePath, stream_url, liveId);
-
   } catch (err) {
     console.error('💥 Erro fatal:', err.message);
     process.exit(1);
