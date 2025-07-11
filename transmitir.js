@@ -52,14 +52,24 @@ async function enviarStatusPuppeteer(data) {
   }
 }
 
-async function rodarFFmpeg(videoPath, rodapePath, streamUrl, id) {
+async function rodarFFmpeg(videoPath, streamUrl, id) {
   return new Promise((resolve, reject) => {
     const ffmpegArgs = [
-      '-re', // envia o vídeo em tempo real (obrigatório para live)
-      '-i', videoPath,
-      '-i', rodapePath,
-      '-filter_complex',
-      "[1:v]scale=iw*0.3:-1[rod];[0:v][rod]overlay=W-w-20:H-h-20:enable='between(t,240,266)'",
+      '-i', videoPath,               // vídeo principal
+      '-i', 'logo.png',             // logo no canto superior direito
+      '-i', 'artefatos/rodape.webm', // rodapé transparente
+
+      '-filter_complex', `
+        [0:v]format=rgba[base];
+        [1:v]scale=-1:11[logo];
+        [2:v]format=rgba,setpts=PTS+240/TB[rodape];
+
+        [base][logo]overlay=W-w-10:10[tmp];
+        [tmp][rodape]overlay=(W-w)/2:H-h-5:enable='between(t,240,266)'[outv]
+      `.trim().replace(/\s+/g, ' '),
+
+      '-map', '[outv]',
+      '-map', '0:a?',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '23',
@@ -67,16 +77,13 @@ async function rodarFFmpeg(videoPath, rodapePath, streamUrl, id) {
       '-c:a', 'aac',
       '-b:a', '192k',
       '-ar', '44100',
-      '-g', '50',
       '-f', 'flv',
       streamUrl
     ];
 
-    console.log(`▶️ FFmpeg: ffmpeg ${ffmpegArgs.join(' ')}`);
     const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
     let notificadoInicio = false;
-
     const notificarInicio = async () => {
       if (!notificadoInicio) {
         try {
@@ -102,6 +109,7 @@ async function rodarFFmpeg(videoPath, rodapePath, streamUrl, id) {
 
     ffmpeg.on('close', async (code) => {
       clearTimeout(fallbackTimer);
+
       if (code === 0) {
         try {
           await enviarStatusPuppeteer({ id, status: 'finished' });
@@ -132,19 +140,9 @@ async function main() {
   try {
     const streamInfoPath = path.join(process.cwd(), 'stream_info.json');
     const videoPath = path.join(process.cwd(), 'video_final_completo.mp4');
-    const rodapePath = path.join(process.cwd(), 'artefatos/rodape.webm');
 
-    if (!fs.existsSync(videoPath)) {
-      throw new Error('video_final_completo.mp4 não encontrado');
-    }
-
-    if (!fs.existsSync(streamInfoPath)) {
-      throw new Error('stream_info.json não encontrado');
-    }
-
-    if (!fs.existsSync(rodapePath)) {
-      throw new Error('rodape.webm não encontrado');
-    }
+    if (!fs.existsSync(videoPath)) throw new Error('video_final_completo.mp4 não encontrado');
+    if (!fs.existsSync(streamInfoPath)) throw new Error('stream_info.json não encontrado');
 
     const infoRaw = fs.readFileSync(streamInfoPath, 'utf-8');
     let info;
@@ -160,9 +158,10 @@ async function main() {
     if (!stream_url) throw new Error('stream_url ausente no stream_info.json');
     if (!liveId) throw new Error('id ausente no stream_info.json');
 
-    console.log(`🚀 Iniciando transmissão para ${stream_url} (id: ${liveId})`);
+    console.log(`🚀 Iniciando transmissão para ${stream_url} (id: ${liveId}) usando arquivo ${path.basename(videoPath)}`);
 
-    await rodarFFmpeg(videoPath, rodapePath, stream_url, liveId);
+    await rodarFFmpeg(videoPath, stream_url, liveId);
+
   } catch (err) {
     console.error('💥 Erro fatal:', err.message);
     process.exit(1);
