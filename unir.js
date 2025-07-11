@@ -124,18 +124,7 @@ async function unirVideos(lista, saida) {
   const txt = 'list.txt';
   fs.writeFileSync(txt, lista.map(v => `file '${v}'`).join('\n'));
   registrarTemporario(txt);
-
-  await executarFFmpeg([
-    '-f', 'concat',
-    '-safe', '0',
-    '-i', txt,
-    '-c:v', 'libvpx-vp9',
-    '-pix_fmt', 'yuva420p',
-    '-b:v', '0',
-    '-c:a', 'libopus',
-    '-y', saida
-  ]);
-
+  await executarFFmpeg(['-f', 'concat', '-safe', '0', '-i', txt, '-c', 'copy', saida]);
   console.log(`🎬 Vídeo final criado: ${saida}`);
 
   const stats = fs.statSync(saida);
@@ -179,26 +168,26 @@ async function unirVideos(lista, saida) {
 
     const arquivos = ['parte1_final.webm'];
 
-    const videoIds = [
+    const idsOrdenados = [
       video_inicial,
       video_miraplay,
       ...videos_extras,
-      video_inicial,
-      'parte2_final.webm',
-      video_final
+      video_inicial // repetido
     ];
 
-    for (let i = 0; i < videoIds.length; i++) {
-      const id = videoIds[i];
-      if (id.endsWith('.webm')) {
-        arquivos.push(id); // já está processado
-        continue;
-      }
+    for (let i = 0; i < idsOrdenados.length; i++) {
+      const id = idsOrdenados[i];
       const nome = `video_extra_${i}`;
       await baixarArquivo(id, `${nome}_raw.mp4`, auth);
       await reencode(`${nome}_raw.mp4`, `${nome}.webm`);
       arquivos.push(`${nome}.webm`);
     }
+
+    arquivos.push('parte2_final.webm');
+
+    await baixarArquivo(video_final, 'video_final_raw.mp4', auth);
+    await reencode('video_final_raw.mp4', 'video_final.webm');
+    arquivos.push('video_final.webm');
 
     await unirVideos(arquivos, 'video_final_completo.webm');
 
