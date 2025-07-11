@@ -14,7 +14,7 @@ on:
         type: string
 
       rodape_id:
-        description: 'ID do arquivo footer (rodape.webm) no Google Drive'
+        description: 'ID do arquivo rodapé (.webm) no Google Drive'
         required: false
         type: string
 
@@ -72,15 +72,22 @@ jobs:
 
           async function baixarRodape() {
             const drive = google.drive({ version: 'v3', auth: await auth.getClient() });
+
+            // ✅ Criar diretório artefatos se não existir
+            if (!fs.existsSync('artefatos')) {
+              fs.mkdirSync('artefatos', { recursive: true });
+            }
+
             const dest = fs.createWriteStream('artefatos/rodape.webm');
             const res = await drive.files.get(
               { fileId: '${{ inputs.rodape_id }}', alt: 'media' },
               { responseType: 'stream' }
             );
-            fs.mkdirSync('artefatos', { recursive: true });
+
             await new Promise((resolve, reject) => {
               res.data.pipe(dest).on('finish', resolve).on('error', reject);
             });
+
             console.log('✅ rodape.webm baixado com sucesso!');
           }
 
@@ -120,7 +127,7 @@ jobs:
       - name: 🧠 Executar script de montagem
         run: node unir.js
 
-      - name: 📤 Salvar vídeo final (.mp4) e arquivos extras como artifact
+      - name: 📤 Salvar vídeo final (.mp4) e artefatos
         uses: actions/upload-artifact@v4
         with:
           name: video_final
