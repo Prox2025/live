@@ -95,7 +95,7 @@ async function main() {
   await baixarArquivo(input.video_principal, 'parte1_raw.mp4', auth);
   await baixarArquivo(input.video_principal, 'parte2_raw.mp4', auth);
 
-  // Baixar rodapé e aplicar com fundo simulado (se existir)
+  // Baixar rodapé e aplicar com fundo translúcido (se existir)
   if (input.rodape_id) {
     await baixarArquivo(input.rodape_id, 'rodape.webm', auth);
     await aplicarRodapeTransparente('parte1_raw.mp4', 'parte1.mp4');
@@ -123,7 +123,7 @@ async function main() {
 
   if (input.logo_id) await baixarArquivo(input.logo_id, 'logo.png', auth);
 
-  // Reencodificar todos
+  // Reencodificar todos os vídeos
   console.log('🎞️ Reencodificando vídeos...');
   const reencodificados = [];
 
@@ -133,22 +133,28 @@ async function main() {
     reencodificados.push(saida);
   }
 
-  // Concatenar usando concat demuxer
+  // Concatenar com reencodificação (NÃO usar -c copy)
   const listaConcat = 'lista_concat.txt';
   const conteudoLista = reencodificados.map(f => `file '${f}'`).join('\n');
   fs.writeFileSync(listaConcat, conteudoLista);
   registrarTemporario(listaConcat);
 
-  console.log('🧩 Concatenando vídeos...');
+  console.log('🧩 Concatenando vídeos com reencodificação final...');
   await executarFFmpeg([
     '-f', 'concat',
     '-safe', '0',
     '-i', listaConcat,
-    '-c', 'copy',
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '23',
+    '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-ar', '44100',
     'video_unido.mp4'
   ]);
 
-  // Aplicar logo no canto superior direito
+  // Aplicar logo
   if (fs.existsSync('logo.png')) {
     console.log('📎 Aplicando logo...');
     await executarFFmpeg([
@@ -163,7 +169,7 @@ async function main() {
     fs.renameSync('video_unido.mp4', 'video_final_completo.mp4');
   }
 
-  // Criar stream_info.json
+  // Criar JSON de informações
   const streamInfo = {
     id: input.id,
     video: 'video_final_completo.mp4',
