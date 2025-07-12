@@ -124,6 +124,7 @@ async function main() {
   const input = JSON.parse(fs.readFileSync(inputFile, 'utf8'));
   const auth = await autenticar();
   const partes = [];
+  const ordem = [];
 
   await baixarArquivo(input.video_principal, 'parte1_raw.mp4', auth);
   await baixarArquivo(input.video_principal, 'parte2_raw.mp4', auth);
@@ -142,8 +143,17 @@ async function main() {
   }
 
   partes.push(parte1_rodape);
-  await baixarArquivo(input.video_inicial, 'inicial1.mp4', auth); await reencodificar('inicial1.mp4', 'r_inicial1.mp4'); partes.push('r_inicial1.mp4');
-  await baixarArquivo(input.video_miraplay, 'miraplay.mp4', auth); await reencodificar('miraplay.mp4', 'r_miraplay.mp4'); partes.push('r_miraplay.mp4');
+  ordem.push('parte1');
+
+  await baixarArquivo(input.video_inicial, 'inicial1.mp4', auth);
+  await reencodificar('inicial1.mp4', 'r_inicial1.mp4');
+  partes.push('r_inicial1.mp4');
+  ordem.push('video_inicial');
+
+  await baixarArquivo(input.video_miraplay, 'miraplay.mp4', auth);
+  await reencodificar('miraplay.mp4', 'r_miraplay.mp4');
+  partes.push('r_miraplay.mp4');
+  ordem.push('video_miraplay');
 
   if (Array.isArray(input.videos_extras)) {
     for (let i = 0; i < Math.min(input.videos_extras.length, 5); i++) {
@@ -152,12 +162,22 @@ async function main() {
       await baixarArquivo(input.videos_extras[i], nome, auth);
       await reencodificar(nome, convertido);
       partes.push(convertido);
+      ordem.push(`extra${i + 1}`);
     }
   }
 
-  await baixarArquivo(input.video_inicial, 'inicial2.mp4', auth); await reencodificar('inicial2.mp4', 'r_inicial2.mp4'); partes.push('r_inicial2.mp4');
+  await baixarArquivo(input.video_inicial, 'inicial2.mp4', auth);
+  await reencodificar('inicial2.mp4', 'r_inicial2.mp4');
+  partes.push('r_inicial2.mp4');
+  ordem.push('video_inicial (repetido)');
+
   partes.push(parte2_rodape);
-  await baixarArquivo(input.video_final, 'final.mp4', auth); await reencodificar('final.mp4', 'r_final.mp4'); partes.push('r_final.mp4');
+  ordem.push('parte2');
+
+  await baixarArquivo(input.video_final, 'final.mp4', auth);
+  await reencodificar('final.mp4', 'r_final.mp4');
+  partes.push('r_final.mp4');
+  ordem.push('video_final');
 
   if (input.logo_id) await baixarArquivo(input.logo_id, 'logo.png', auth);
 
@@ -177,13 +197,17 @@ async function main() {
     fs.renameSync('video_unido.mp4', 'video_final_completo.mp4');
   }
 
-  fs.writeFileSync('stream_info.json', JSON.stringify({
+  // ✅ Criar stream_info.json atualizado
+  const streamInfo = {
     id: input.id,
     video: 'video_final_completo.mp4',
     resolucao: '1280x720',
     stream_url: input.stream_url || null,
-    ordem: ['parte1', 'inicial', 'miraplay', 'extras', 'inicial2', 'parte2', 'final']
-  }, null, 2));
+    ordem
+  };
+
+  fs.writeFileSync('stream_info.json', JSON.stringify(streamInfo, null, 2));
+  console.log('✅ stream_info.json salvo com sucesso.');
 
   console.log('✅ Finalizado com sucesso!');
   limparTemporarios();
