@@ -76,21 +76,15 @@ async function aplicarRodapeTransparente(videoInput, videoOutput) {
 async function main() {
   const input = JSON.parse(fs.readFileSync(inputFile, 'utf8'));
   const auth = await autenticar();
-
   const partes = [];
 
-  // Baixar vídeos
-  console.log('⏬ Baixando vídeos...');
-  await baixarArquivo(input.video_principal, 'parte1_raw.mp4', auth);  // parte 1
-  await baixarArquivo(input.video_principal, 'parte2_raw.mp4', auth);  // parte 2
+  // Baixar vídeos e aplicar rodapé se necessário
+  await baixarArquivo(input.video_principal, 'parte1_raw.mp4', auth);
+  await baixarArquivo(input.video_principal, 'parte2_raw.mp4', auth);
 
   if (input.rodape_id) {
     await baixarArquivo(input.rodape_id, 'rodape.webm', auth);
-
-    console.log('🖼️ Aplicando rodapé em parte1...');
     await aplicarRodapeTransparente('parte1_raw.mp4', 'parte1.mp4');
-
-    console.log('🖼️ Aplicando rodapé em parte2...');
     await aplicarRodapeTransparente('parte2_raw.mp4', 'parte2.mp4');
   } else {
     fs.renameSync('parte1_raw.mp4', 'parte1.mp4');
@@ -98,12 +92,8 @@ async function main() {
   }
 
   partes.push('parte1.mp4');
-
-  await baixarArquivo(input.video_inicial, 'inicial1.mp4', auth);
-  partes.push('inicial1.mp4');
-
-  await baixarArquivo(input.video_miraplay, 'miraplay.mp4', auth);
-  partes.push('miraplay.mp4');
+  await baixarArquivo(input.video_inicial, 'inicial1.mp4', auth); partes.push('inicial1.mp4');
+  await baixarArquivo(input.video_miraplay, 'miraplay.mp4', auth); partes.push('miraplay.mp4');
 
   if (Array.isArray(input.videos_extras)) {
     for (let i = 0; i < Math.min(input.videos_extras.length, 5); i++) {
@@ -113,52 +103,44 @@ async function main() {
     }
   }
 
-  await baixarArquivo(input.video_inicial, 'inicial2.mp4', auth);
-  partes.push('inicial2.mp4');
-
+  await baixarArquivo(input.video_inicial, 'inicial2.mp4', auth); partes.push('inicial2.mp4');
   partes.push('parte2.mp4');
+  await baixarArquivo(input.video_final, 'final.mp4', auth); partes.push('final.mp4');
 
-  await baixarArquivo(input.video_final, 'final.mp4', auth);
-  partes.push('final.mp4');
+  if (input.logo_id) await baixarArquivo(input.logo_id, 'logo.png', auth);
 
-  if (input.logo_id) {
-    await baixarArquivo(input.logo_id, 'logo.png', auth);
-  }
+  // Reencodificar todos os vídeos (mesmo codec, proporção, keyframes)
+  console.log('🎞️ Reencodificando vídeos com mesmo codec e proporção...');
+  const reencodificados = [];
 
-  // Reencodificação um a um
-  console.log('🎞️ Reencodificando vídeos...');
-  const convertidos = [];
-  for (const [idx, entrada] of partes.entries()) {
-    const saida = `convertido_${idx}.mp4`;
+  for (const [i, entrada] of partes.entries()) {
+    const saida = `reencode_${i}.mp4`;
     await executarFFmpeg([
       '-i', entrada,
-      '-vf', 'scale=1280:720',
+      '-vf', 'scale=1280:720,fps=30',
+      '-r', '30',
+      '-g', '60',
       '-c:v', 'libx264',
-      '-preset', 'fast',
+      '-pix_fmt', 'yuv420p',
+      '-preset', 'veryfast',
       '-crf', '23',
       '-c:a', 'aac',
       '-b:a', '128k',
       saida
     ]);
     registrarTemporario(saida);
-    convertidos.push(saida);
+    reencodificados.push(saida);
   }
 
-  // Gerar lista para concatenação com filter_complex
-  const inputs = [];
-  const maps = [];
-  for (let i = 0; i < convertidos.length; i++) {
-    inputs.push('-i', convertidos[i]);
-    maps.push(`[${i}:v:0][${i}:a:0]`);
-  }
+  // Concatenação com filter_complex concat
+  const inputArgs = reencodificados.flatMap(f => ['-i', f]);
+  const mapInputs = reencodificados.map((_, i) => `[${i}:v:0][${i}:a:0]`).join('');
+  const filter = `${mapInputs}concat=n=${reencodificados.length}:v=1:a=1[outv][outa]`;
 
-  const concatFilter = maps.join('') + `concat=n=${convertidos.length}:v=1:a=1[outv][outa]`;
-
-  const videoFinal = 'video_unido.mp4';
-
+  console.log('🧩 Concatenando vídeos...');
   await executarFFmpeg([
-    ...inputs,
-    '-filter_complex', concatFilter,
+    ...inputArgs,
+    '-filter_complex', filter,
     '-map', '[outv]',
     '-map', '[outa]',
     '-c:v', 'libx264',
@@ -166,49 +148,49 @@ async function main() {
     '-crf', '23',
     '-c:a', 'aac',
     '-b:a', '128k',
-    videoFinal
+    'video_unido.mp4'
   ]);
 
-  // Aplicar logo (aumentado para 60px)
+  // Aplicar logo maior
   if (fs.existsSync('logo.png')) {
-    console.log('📎 Aplicando logo...');
+    console.log('📎 Aplicando logo no canto superior direito...');
     await executarFFmpeg([
-      '-i', videoFinal,
+      '-i', 'video_unido.mp4',
       '-i', 'logo.png',
       '-filter_complex',
-      '[1]scale=-1:25[logo];[0][logo]overlay=W-w-10:10',
+      '[1]scale=-1:80[logo];[0][logo]overlay=W-w-20:20',
       '-c:a', 'copy',
       'video_final_completo.mp4'
     ]);
   } else {
-    fs.renameSync(videoFinal, 'video_final_completo.mp4');
+    fs.renameSync('video_unido.mp4', 'video_final_completo.mp4');
   }
 
   // Criar stream_info.json
   const streamInfo = {
-    id: input.id || null,
-    stream_url: input.stream_url || null,
+    id: input.id,
     video: 'video_final_completo.mp4',
+    stream_url: input.stream_url || null,
     resolucao: '1280x720',
     ordem: [
-      'parte1 (rodapé)',
-      'video_inicial',
-      'video_miraplay',
+      'parte1 (com rodapé)',
+      'inicial',
+      'miraplay',
       ...(input.videos_extras || []).map((_, i) => `extra${i + 1}`),
-      'video_inicial (repetido)',
-      'parte2 (rodapé)',
-      'video_final'
+      'inicial (repetido)',
+      'parte2 (com rodapé)',
+      'final'
     ]
   };
 
   fs.writeFileSync('stream_info.json', JSON.stringify(streamInfo, null, 2));
-  console.log('✅ Vídeo final: video_final_completo.mp4');
-  console.log('📄 stream_info.json salvo.');
+  console.log('✅ Finalizado: video_final_completo.mp4');
+  console.log('📄 stream_info.json salvo');
 
   limparTemporarios();
 }
 
 main().catch(err => {
-  console.error('🚨 Erro:', err);
+  console.error('🚨 Erro fatal:', err);
   process.exit(1);
 });
