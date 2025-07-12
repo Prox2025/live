@@ -53,18 +53,18 @@ async function baixarArquivo(id, destino, auth) {
   });
 }
 
-// ✅ APLICA LOGO + RODAPÉ SOMENTE NAS PARTES PRINCIPAIS
+// ✅ Aplica logo + rodapé simulando transparência com fundo
 async function aplicarLogoRodape(videoInput, videoOutput) {
   await executarFFmpeg([
     '-i', videoInput,
     '-i', 'logo.png',
     '-i', 'rodape.webm',
     '-filter_complex',
-    "[0:v]scale=1280:720,format=rgba[base];" +
+    "[0:v]scale=1280:720,format=yuv420p[base];" +
     "[1:v]scale=-1:80[logo];" +
     "[2:v]format=rgba,setpts=PTS-STARTPTS+240/TB[rodape];" +
     "[base][logo]overlay=W-w-20:20[tmp1];" +
-    "[tmp1][rodape]overlay=x=(W-w)/2:y=H-h:enable='gte(t,240)':shortest=1[outv]",
+    "[tmp1][rodape]overlay=x=(W-w)/2:y=H-h:enable='gte(t,240)':format=auto:shortest=1[outv]",
     '-map', '[outv]',
     '-map', '0:a?',
     '-c:v', 'libx264',
@@ -85,19 +85,18 @@ async function main() {
   const auth = await autenticar();
   const partes = [];
 
-  // Baixar vídeos principais
+  // Baixar e preparar partes principais
   await baixarArquivo(input.video_principal, 'parte1_raw.mp4', auth);
   await baixarArquivo(input.video_principal, 'parte2_raw.mp4', auth);
   await baixarArquivo(input.rodape_id, 'rodape.webm', auth);
   await baixarArquivo(input.logo_id, 'logo.png', auth);
 
-  // Aplicar logo + rodapé nas partes principais
   await aplicarLogoRodape('parte1_raw.mp4', 'parte1.mp4');
   await aplicarLogoRodape('parte2_raw.mp4', 'parte2.mp4');
 
   partes.push('parte1.mp4');
 
-  // Baixar e adicionar outros vídeos
+  // Demais vídeos
   await baixarArquivo(input.video_inicial, 'inicial1.mp4', auth); partes.push('inicial1.mp4');
   await baixarArquivo(input.video_miraplay, 'miraplay.mp4', auth); partes.push('miraplay.mp4');
 
@@ -111,10 +110,9 @@ async function main() {
 
   await baixarArquivo(input.video_inicial, 'inicial2.mp4', auth); partes.push('inicial2.mp4');
   partes.push('parte2.mp4');
-
   await baixarArquivo(input.video_final, 'final.mp4', auth); partes.push('final.mp4');
 
-  // Reencode todos os vídeos com padrão compatível
+  // Reencode com padronização para concat
   console.log('🎞️ Reencodificando vídeos...');
   const reencodificados = [];
 
@@ -139,7 +137,7 @@ async function main() {
     reencodificados.push(saida);
   }
 
-  // Concatenar vídeos
+  // ✅ Concatenação real com reencodificação final (evita travamento em Facebook)
   console.log('🧩 Concatenando vídeos...');
   const listFile = 'list.txt';
   fs.writeFileSync(listFile, reencodificados.map(f => `file '${f}'`).join('\n'));
@@ -149,11 +147,18 @@ async function main() {
     '-f', 'concat',
     '-safe', '0',
     '-i', listFile,
-    '-c', 'copy',
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '23',
+    '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-ar', '44100',
+    '-y',
     'video_final_completo.mp4'
   ]);
 
-  // Salvar info de stream
+  // Salvar info
   const streamInfo = {
     id: input.id,
     video: 'video_final_completo.mp4',
