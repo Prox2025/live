@@ -8,31 +8,42 @@ const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL || '';
 
 async function enviarStatus(payload) {
   if (!SERVER_STATUS_URL) return;
+
   console.log('📡 Enviando status ao servidor...', payload);
 
   try {
     const browser = await puppeteer.launch({
       headless: true,
-      args: ['--disable-setuid-sandbox'],
+      args: ['--no-sandbox', '--disable-setuid-sandbox'], // <- 👈 necessário para ambientes restritos
     });
+
     const page = await browser.newPage();
 
-    await page.goto(SERVER_STATUS_URL, { waitUntil: 'networkidle2' });
+    await page.goto(SERVER_STATUS_URL, { waitUntil: 'networkidle2', timeout: 15000 });
 
-    await page.evaluate(async (payload) => {
-      await fetch(location.href, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
+    const result = await page.evaluate(async (payload) => {
+      try {
+        const res = await fetch(location.href, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        return { ok: res.ok, status: res.status };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
     }, payload);
 
     await browser.close();
-    console.log('✅ Status enviado:', payload.status);
+
+    if (result.ok) {
+      console.log('✅ Status enviado com sucesso:', payload.status);
+    } else {
+      console.warn(`⚠️ Falha no envio (HTTP ${result.status || 'N/A'}): ${result.error || 'desconhecido'}`);
+    }
+
   } catch (err) {
-    console.warn('⚠️ Erro ao enviar status:', err.message);
+    console.warn('⚠️ Erro ao enviar status (puppeteer):', err.message);
   }
 }
 
