@@ -39,6 +39,7 @@ async function autenticar() {
 }
 
 async function baixarArquivo(id, destino, auth) {
+  if (!id) throw new Error(`❌ ID não definido para ${destino}`);
   const drive = google.drive({ version: 'v3', auth });
   const res = await drive.files.get({ fileId: id, alt: 'media' }, { responseType: 'stream' });
   return new Promise((resolve, reject) => {
@@ -53,10 +54,9 @@ async function baixarArquivo(id, destino, auth) {
   });
 }
 
-// ✅ Aplica logo + rodapé simulando transparência com fundo
-async function aplicarLogoRodape(videoInput, videoOutput) {
+async function aplicarLogoRodape(input, output) {
   await executarFFmpeg([
-    '-i', videoInput,
+    '-i', input,
     '-i', 'logo.png',
     '-i', 'rodape.webm',
     '-filter_complex',
@@ -75,48 +75,53 @@ async function aplicarLogoRodape(videoInput, videoOutput) {
     '-b:a', '128k',
     '-ar', '44100',
     '-y',
-    videoOutput
+    output
   ]);
-  registrarTemporario(videoOutput);
+  registrarTemporario(output);
 }
 
 async function main() {
   const input = JSON.parse(fs.readFileSync(inputFile, 'utf8'));
   const auth = await autenticar();
-  const partes = [];
 
-  // Baixar e preparar partes principais
+  // Baixar tudo primeiro
   await baixarArquivo(input.video_principal, 'parte1_raw.mp4', auth);
   await baixarArquivo(input.video_principal, 'parte2_raw.mp4', auth);
   await baixarArquivo(input.rodape_id, 'rodape.webm', auth);
   await baixarArquivo(input.logo_id, 'logo.png', auth);
+  await baixarArquivo(input.video_inicial, 'inicial1.mp4', auth);
+  await baixarArquivo(input.video_inicial, 'inicial2.mp4', auth);
+  await baixarArquivo(input.video_miraplay, 'miraplay.mp4', auth);
+  await baixarArquivo(input.video_final, 'final.mp4', auth);
 
-  await aplicarLogoRodape('parte1_raw.mp4', 'parte1.mp4');
-  await aplicarLogoRodape('parte2_raw.mp4', 'parte2.mp4');
-
-  partes.push('parte1.mp4');
-
-  // Demais vídeos
-  await baixarArquivo(input.video_inicial, 'inicial1.mp4', auth); partes.push('inicial1.mp4');
-  await baixarArquivo(input.video_miraplay, 'miraplay.mp4', auth); partes.push('miraplay.mp4');
-
+  const extras = [];
   if (Array.isArray(input.videos_extras)) {
     for (let i = 0; i < Math.min(input.videos_extras.length, 5); i++) {
       const nome = `extra${i + 1}.mp4`;
       await baixarArquivo(input.videos_extras[i], nome, auth);
-      partes.push(nome);
+      extras.push(nome);
     }
   }
 
-  await baixarArquivo(input.video_inicial, 'inicial2.mp4', auth); partes.push('inicial2.mp4');
-  partes.push('parte2.mp4');
-  await baixarArquivo(input.video_final, 'final.mp4', auth); partes.push('final.mp4');
+  // Aplicar logo + rodapé nas partes principais
+  await aplicarLogoRodape('parte1_raw.mp4', 'parte1.mp4');
+  await aplicarLogoRodape('parte2_raw.mp4', 'parte2.mp4');
 
-  // Reencode com padronização para concat
+  const ordemFinal = [
+    'parte1.mp4',
+    'inicial1.mp4',
+    'miraplay.mp4',
+    ...extras,
+    'inicial2.mp4',
+    'parte2.mp4',
+    'final.mp4'
+  ];
+
+  // Reencode todos os vídeos
   console.log('🎞️ Reencodificando vídeos...');
   const reencodificados = [];
 
-  for (const [i, entrada] of partes.entries()) {
+  for (const [i, entrada] of ordemFinal.entries()) {
     const saida = `reencode_${i}.mp4`;
     await executarFFmpeg([
       '-i', entrada,
@@ -137,12 +142,12 @@ async function main() {
     reencodificados.push(saida);
   }
 
-  // ✅ Concatenação real com reencodificação final (evita travamento em Facebook)
-  console.log('🧩 Concatenando vídeos...');
+  // Concatenar tudo
   const listFile = 'list.txt';
   fs.writeFileSync(listFile, reencodificados.map(f => `file '${f}'`).join('\n'));
   registrarTemporario(listFile);
 
+  console.log('🧩 Concatenando vídeo final...');
   await executarFFmpeg([
     '-f', 'concat',
     '-safe', '0',
@@ -158,26 +163,17 @@ async function main() {
     'video_final_completo.mp4'
   ]);
 
-  // Salvar info
+  // Salvar JSON de referência
   const streamInfo = {
     id: input.id,
-    video: 'video_final_completo.mp4',
     stream_url: input.stream_url || null,
-    resolucao: '1280x720',
-    ordem: [
-      'parte1 (logo + rodapé)',
-      'inicial',
-      'miraplay',
-      ...(input.videos_extras || []).map((_, i) => `extra${i + 1}`),
-      'inicial (repetido)',
-      'parte2 (logo + rodapé)',
-      'final'
-    ]
+    video: 'video_final_completo.mp4',
+    ordem: ordemFinal
   };
 
   fs.writeFileSync('stream_info.json', JSON.stringify(streamInfo, null, 2));
   console.log('✅ Finalizado: video_final_completo.mp4');
-  console.log('📄 stream_info.json salvo');
+  console.log('📄 stream_info.json criado');
 
   limparTemporarios();
 }
