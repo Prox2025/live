@@ -6,7 +6,6 @@ const path = require('path');
 const keyFile = process.env.KEYFILE || 'chave.json';
 const inputFile = process.env.INPUTFILE || 'input.json';
 const SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
-
 const arquivosTemporarios = [];
 
 function registrarTemporario(caminho) {
@@ -85,12 +84,18 @@ async function obterDuracao(video) {
   });
 }
 
-async function cortarMetade(video, parte1, parte2) {
-  const duracao = await obterDuracao(video);
-  const meio = duracao / 2;
-
-  await executarFFmpeg(['-i', video, '-t', meio.toString(), '-c', 'copy', parte1], parte1);
-  await executarFFmpeg(['-i', video, '-ss', meio.toString(), '-c', 'copy', parte2], parte2);
+async function cortarParteComReencode(video, inicio, duracao, saida) {
+  await executarFFmpeg([
+    '-i', video,
+    '-ss', inicio.toString(),
+    '-t', duracao.toString(),
+    '-c:v', 'libx264',
+    '-preset', 'slow',
+    '-crf', '20',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    saida
+  ], saida);
 }
 
 async function reencodarParaPadrao(entrada, saida, ref) {
@@ -100,8 +105,8 @@ async function reencodarParaPadrao(entrada, saida, ref) {
     '-i', entrada,
     '-vf', `scale=${scale},fps=${fr}`,
     '-c:v', 'libx264',
-    '-preset', 'medium',
-    '-crf', '23',
+    '-preset', 'slow',
+    '-crf', '20',
     '-c:a', 'aac',
     '-b:a', '128k',
     saida
@@ -112,7 +117,7 @@ async function aplicarLogo(video, output, logoPath) {
   await executarFFmpeg([
     '-i', video,
     '-i', logoPath,
-    '-filter_complex', '[1]scale=80:-1[logo];[0][logo]overlay=20:20',
+    '-filter_complex', '[1]scale=-1:75[logo];[0][logo]overlay=W-w:0',
     '-c:a', 'copy',
     output
   ], output);
@@ -141,12 +146,14 @@ async function main() {
   const videoPrincipalRaw = `raw_principal.mp4`;
   await baixarArquivo(input.video_principal, videoPrincipalRaw, auth);
   const ref = await obterParametrosVideo(videoPrincipalRaw);
-  await reencodarParaPadrao(videoPrincipalRaw, 'video_principal_ok.mp4', ref);
+  const duracaoTotal = await obterDuracao(videoPrincipalRaw);
+  const meio = duracaoTotal / 2;
 
-  // ✂️ Cortar vídeo principal em duas partes
-  await cortarMetade('video_principal_ok.mp4', 'parte1.mp4', 'parte2.mp4');
+  // ✂️ Cortar parte1 e parte2 com reencode
+  await cortarParteComReencode(videoPrincipalRaw, 0, meio, 'parte1.mp4');
+  await cortarParteComReencode(videoPrincipalRaw, meio, duracaoTotal - meio, 'parte2.mp4');
 
-  // 🖼️ Aplicar logo se existir
+  // 🖼️ Aplicar logo nas partes
   if (input.logo_id) {
     await baixarArquivo(input.logo_id, 'logo.png', auth);
     await aplicarLogo('parte1.mp4', 'parte1_logo.mp4', 'logo.png');
@@ -156,7 +163,7 @@ async function main() {
     fs.renameSync('parte2.mp4', 'parte2_logo.mp4');
   }
 
-  // 📥 Baixar e reencodar todos os outros vídeos
+  // 📥 Reencodar demais vídeos
   const arquivos = {};
   arquivos.inicial = await baixarEReencodarPadrao(input.video_inicial, 'inicial', ref, auth);
   arquivos.miraplay = await baixarEReencodarPadrao(input.video_miraplay, 'miraplay', ref, auth);
@@ -168,26 +175,25 @@ async function main() {
     arquivos.extras.push(extra);
   }
 
-  // 🧩 Ordem final
+  // 🧩 Ordem de montagem
   const ordem = [
     'parte1_logo.mp4',
     arquivos.inicial,
     arquivos.miraplay,
     ...arquivos.extras,
-    arquivos.inicial, // repetido
+    arquivos.inicial,
     'parte2_logo.mp4',
     arquivos.final
   ];
 
-  // 🎬 Unir tudo
+  // 🧱 Unir tudo
   await unirVideos(ordem, 'video_final_completo.mp4');
 
-  // 📊 Informações finais
+  // 📊 Gerar info
   const duracaoFinal = await obterDuracao('video_final_completo.mp4');
   const stats = fs.statSync('video_final_completo.mp4');
   const tamanhoMB = (stats.size / (1024 * 1024)).toFixed(2);
 
-  // 🧾 Gerar stream_info.json
   fs.writeFileSync('stream_info.json', JSON.stringify({
     id: input.id || null,
     stream_url: input.stream_url || null,
