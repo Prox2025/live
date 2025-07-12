@@ -1,8 +1,11 @@
+// montar_video_com_rodape.js
+// IMPORTAÇÕES
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { google } = require('googleapis');
 const path = require('path');
 
+// CONFIGURAÇÃO
 const keyFile = process.env.KEYFILE || 'chave.json';
 const inputFile = process.env.INPUTFILE || 'input.json';
 const SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
@@ -48,32 +51,6 @@ async function baixarArquivo(id, destino, auth) {
   });
 }
 
-async function obterParametrosVideo(video) {
-  return new Promise((resolve, reject) => {
-    const ffprobe = spawn('ffprobe', [
-      '-v', 'error',
-      '-select_streams', 'v:0',
-      '-show_entries', 'stream=width,height,r_frame_rate',
-      '-of', 'json',
-      video
-    ]);
-
-    let data = '';
-    ffprobe.stdout.on('data', chunk => data += chunk);
-    ffprobe.on('close', () => {
-      const json = JSON.parse(data);
-      const stream = json.streams[0];
-      const [num, den] = stream.r_frame_rate.split('/').map(Number);
-      resolve({
-        width: stream.width,
-        height: stream.height,
-        framerate: num / den
-      });
-    });
-    ffprobe.on('error', reject);
-  });
-}
-
 async function obterDuracao(video) {
   return new Promise((resolve, reject) => {
     const ffprobe = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', video]);
@@ -84,127 +61,102 @@ async function obterDuracao(video) {
   });
 }
 
-async function cortarParteComReencode(video, inicio, duracao, saida) {
+async function cortarTrechoComFFmpeg(input, inicio, duracao, output) {
   await executarFFmpeg([
-    '-i', video,
+    '-i', input,
     '-ss', inicio.toString(),
     '-t', duracao.toString(),
     '-c:v', 'libx264',
-    '-preset', 'slow',
     '-crf', '20',
+    '-preset', 'slow',
     '-c:a', 'aac',
     '-b:a', '128k',
-    saida
-  ], saida);
-}
-
-async function reencodarParaPadrao(entrada, saida, ref) {
-  const scale = `${ref.width}:${ref.height}`;
-  const fr = ref.framerate.toFixed(2);
-  await executarFFmpeg([
-    '-i', entrada,
-    '-vf', `scale=${scale},fps=${fr}`,
-    '-c:v', 'libx264',
-    '-preset', 'slow',
-    '-crf', '20',
-    '-c:a', 'aac',
-    '-b:a', '128k',
-    saida
-  ], saida);
-}
-
-async function aplicarLogo(video, output, logoPath) {
-  await executarFFmpeg([
-    '-i', video,
-    '-i', logoPath,
-    '-filter_complex', '[1]scale=-1:75[logo];[0][logo]overlay=W-w:0',
-    '-c:a', 'copy',
     output
   ], output);
 }
 
-async function unirVideos(listaVideos, saida) {
-  const listaTxt = 'inputs.txt';
-  fs.writeFileSync(listaTxt, listaVideos.map(v => `file '${path.resolve(v)}'`).join('\n'));
-  await executarFFmpeg(['-f', 'concat', '-safe', '0', '-i', listaTxt, '-c', 'copy', saida], saida);
-  registrarTemporario(listaTxt);
+async function inserirRodape(videoParte, rodape, saida, duracaoRodape, pontoInsercao) {
+  const antes = `${saida}_pre.mp4`;
+  const depois = `${saida}_post.mp4`;
+  const parteReduzida = `${saida}_reduzido.mp4`;
+  const combinado = `${saida}_rodape.mp4`;
+
+  // Cortar antes e depois do ponto de inserção
+  await cortarTrechoComFFmpeg(videoParte, 0, pontoInsercao, antes);
+  await cortarTrechoComFFmpeg(videoParte, pontoInsercao + duracaoRodape, 9999, depois);
+
+  // Reduzir o vídeo original para caber no fundo branco do rodapé
+  await executarFFmpeg([
+    '-i', videoParte,
+    '-vf', 'scale=480:270',
+    '-t', duracaoRodape.toString(),
+    '-c:v', 'libx264',
+    '-crf', '20',
+    '-preset', 'slow',
+    '-an',
+    parteReduzida
+  ], parteReduzida);
+
+  // Combinar rodapé com o vídeo reduzido sobreposto
+  await executarFFmpeg([
+    '-i', rodape,
+    '-i', parteReduzida,
+    '-filter_complex', '[0:v][1:v]overlay=(W-w)/2:(H-h)/2',
+    '-t', duracaoRodape.toString(),
+    '-c:v', 'libx264',
+    '-preset', 'slow',
+    '-crf', '20',
+    '-an',
+    combinado
+  ], combinado);
+
+  // Juntar tudo: antes + combinado + depois
+  const lista = `${saida}_lista.txt`;
+  fs.writeFileSync(lista, `file '${path.resolve(antes)}'\nfile '${path.resolve(combinado)}'\nfile '${path.resolve(depois)}'\n`);
+  await executarFFmpeg(['-f', 'concat', '-safe', '0', '-i', lista, '-c', 'copy', saida], saida);
 }
 
-async function baixarEReencodarPadrao(id, nomeBase, ref, auth) {
-  const raw = `raw_${nomeBase}.mp4`;
-  const final = `ok_${nomeBase}.mp4`;
-  await baixarArquivo(id, raw, auth);
-  await reencodarParaPadrao(raw, final, ref);
-  return final;
+async function unirFinal(lista, saida) {
+  const listaTxt = 'inputs_final.txt';
+  fs.writeFileSync(listaTxt, lista.map(f => `file '${path.resolve(f)}'`).join('\n'));
+  await executarFFmpeg(['-f', 'concat', '-safe', '0', '-i', listaTxt, '-c', 'copy', saida], saida);
 }
 
 async function main() {
-  const auth = await autenticar();
   const input = JSON.parse(fs.readFileSync(inputFile));
+  const auth = await autenticar();
 
-  // 🎯 Baixar vídeo principal e extrair padrão
-  const videoPrincipalRaw = `raw_principal.mp4`;
-  await baixarArquivo(input.video_principal, videoPrincipalRaw, auth);
-  const ref = await obterParametrosVideo(videoPrincipalRaw);
-  const duracaoTotal = await obterDuracao(videoPrincipalRaw);
-  const meio = duracaoTotal / 2;
+  // Baixar rodapé
+  await baixarArquivo(input.rodape_id, 'rodape.mp4', auth);
+  const duracaoRodape = await obterDuracao('rodape.mp4');
 
-  // ✂️ Cortar parte1 e parte2 com reencode
-  await cortarParteComReencode(videoPrincipalRaw, 0, meio, 'parte1.mp4');
-  await cortarParteComReencode(videoPrincipalRaw, meio, duracaoTotal - meio, 'parte2.mp4');
+  // Baixar partes e inserir rodapé
+  await baixarArquivo(input.parte1_id, 'parte1.mp4', auth);
+  await inserirRodape('parte1.mp4', 'rodape.mp4', 'parte1_final.mp4', duracaoRodape, 240);
 
-  // 🖼️ Aplicar logo nas partes
-  if (input.logo_id) {
-    await baixarArquivo(input.logo_id, 'logo.png', auth);
-    await aplicarLogo('parte1.mp4', 'parte1_logo.mp4', 'logo.png');
-    await aplicarLogo('parte2.mp4', 'parte2_logo.mp4', 'logo.png');
-  } else {
-    fs.renameSync('parte1.mp4', 'parte1_logo.mp4');
-    fs.renameSync('parte2.mp4', 'parte2_logo.mp4');
-  }
+  await baixarArquivo(input.parte2_id, 'parte2.mp4', auth);
+  await inserirRodape('parte2.mp4', 'rodape.mp4', 'parte2_final.mp4', duracaoRodape, 240);
 
-  // 📥 Reencodar demais vídeos
-  const arquivos = {};
-  arquivos.inicial = await baixarEReencodarPadrao(input.video_inicial, 'inicial', ref, auth);
-  arquivos.miraplay = await baixarEReencodarPadrao(input.video_miraplay, 'miraplay', ref, auth);
-  arquivos.final = await baixarEReencodarPadrao(input.video_final, 'final', ref, auth);
+  // Montar vídeo final
+  const ordem = ['parte1_final.mp4', 'parte2_final.mp4'];
+  await unirFinal(ordem, 'video_final_completo.mp4');
 
-  arquivos.extras = [];
-  for (let i = 0; i < (input.videos_extras || []).length; i++) {
-    const extra = await baixarEReencodarPadrao(input.videos_extras[i], `extra${i}`, ref, auth);
-    arquivos.extras.push(extra);
-  }
-
-  // 🧩 Ordem de montagem
-  const ordem = [
-    'parte1_logo.mp4',
-    arquivos.inicial,
-    arquivos.miraplay,
-    ...arquivos.extras,
-    arquivos.inicial,
-    'parte2_logo.mp4',
-    arquivos.final
-  ];
-
-  // 🧱 Unir tudo
-  await unirVideos(ordem, 'video_final_completo.mp4');
-
-  // 📊 Gerar info
-  const duracaoFinal = await obterDuracao('video_final_completo.mp4');
+  // Info final
   const stats = fs.statSync('video_final_completo.mp4');
+  const duracaoFinal = await obterDuracao('video_final_completo.mp4');
   const tamanhoMB = (stats.size / (1024 * 1024)).toFixed(2);
 
   fs.writeFileSync('stream_info.json', JSON.stringify({
-    id: input.id || null,
+    id: input.id,
     stream_url: input.stream_url || null,
-    duracao_segundos: duracaoFinal,
-    tamanho_mb: parseFloat(tamanhoMB),
+    duracao: duracaoFinal,
+    tamanho_mb: tamanhoMB,
     criado_em: new Date().toISOString()
   }, null, 2));
 
-  console.log('✅ Vídeo final pronto: video_final_completo.mp4');
-  console.log(`⏱️  Duração total: ${duracaoFinal.toFixed(2)} segundos`);
-  console.log(`💾 Tamanho final: ${tamanhoMB} MB`);
+  console.log(`✅ Vídeo final: video_final_completo.mp4`);
+  console.log(`⏱️ Duração: ${duracaoFinal.toFixed(2)}s`);
+  console.log(`💾 Tamanho: ${tamanhoMB} MB`);
 }
 
 main().catch(console.error);
