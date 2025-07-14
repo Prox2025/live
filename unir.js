@@ -1,10 +1,10 @@
-
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
 const keyFile = process.env.KEYFILE || 'rclone.conf';
 const inputFile = process.env.INPUTFILE || 'input.json';
+const remoteName = 'meudrive'; // Nome do remote usado no rclone.conf
 
 const arquivosTemporarios = [];
 
@@ -27,26 +27,33 @@ function executarFFmpeg(args, output) {
   });
 }
 
-async function baixarArquivo(id, destino) {
-  if (!id) throw new Error(`❌ ID ausente para ${destino}`);
+async function baixarArquivo(folderId, destino) {
+  if (!folderId) throw new Error(`❌ ID ausente para ${destino}`);
 
   return new Promise((resolve, reject) => {
-    const rclone = spawn('rclone', ['copy', `meudrive:{${id}}`, '.', '--config', keyFile]);
+    const rclone = spawn('rclone', [
+      'copy',
+      `${remoteName}:`,
+      '.',
+      '--drive-root-folder-id', folderId,
+      '--config', keyFile,
+      '--drive-export-formats', 'mp4,webm'
+    ]);
 
     rclone.stderr.on('data', data => process.stderr.write(data));
     rclone.on('close', code => {
       if (code === 0) {
-        const baixados = fs.readdirSync('.')
-          .filter(f => f.includes(id) && (f.endsWith('.mp4') || f.endsWith('.webm')));
-        if (baixados.length === 0) {
-          return reject(new Error(`❌ Nenhum arquivo encontrado após download de ${id}`));
+        const baixado = fs.readdirSync('.')
+          .find(f => f.endsWith('.mp4') || f.endsWith('.webm'));
+        if (!baixado) {
+          return reject(new Error(`❌ Nenhum arquivo encontrado após baixar ${folderId}`));
         }
-        fs.renameSync(baixados[0], destino);
+        fs.renameSync(baixado, destino);
         registrarTemporario(destino);
         console.log(`📥 Baixado via rclone: ${destino}`);
         resolve();
       } else {
-        reject(new Error(`❌ rclone falhou ao baixar ${id}`));
+        reject(new Error(`❌ rclone falhou ao baixar ${folderId}`));
       }
     });
   });
@@ -111,7 +118,6 @@ async function inserirRodape(video, rodape, saida, tempoRodape, pontoInsercao) {
   await cortarTrecho(video, pontoInsercao + tempoRodape, 9999, depois);
   await cortarTrecho(video, pontoInsercao, tempoRodape, trechoComRodape);
 
-  // Aplicar redimensionamento + rodapé
   await executarFFmpeg([
     '-i', trechoComRodape,
     '-i', rodape,
@@ -125,7 +131,6 @@ async function inserirRodape(video, rodape, saida, tempoRodape, pontoInsercao) {
     combinado
   ], combinado);
 
-  // Concatenar partes
   const listaConcat = saida + '_lista.txt';
   fs.writeFileSync(listaConcat, [
     `file '${path.resolve(antes)}'`,
