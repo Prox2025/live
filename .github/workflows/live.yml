@@ -41,7 +41,6 @@ on:
 jobs:
   montar-video:
     runs-on: ubuntu-latest
-
     steps:
       - name: 📥 Clonar repositório
         uses: actions/checkout@v4
@@ -56,24 +55,24 @@ jobs:
       - name: 📄 Salvar rclone.conf
         run: |
           mkdir -p ~/.config/rclone
-          echo "${{ inputs.rclone_conf }}" > ~/.config/rclone/rclone.conf
+          cat <<EOF > ~/.config/rclone/rclone.conf
+${{ inputs.rclone_conf }}
+EOF
 
-      - name: 📋 Verificar dados recebidos
+      - name: 📄 Validar dados recebidos
         run: |
-          echo "✅ ID:             ${{ inputs.id }}"
-          echo "📼 Vídeo principal: ${{ inputs.video_principal }}"
-          echo "🧩 Vídeos extras:   ${{ inputs.videos_extras }}"
-          echo "🖼️ Rodapé ID:       ${{ inputs.rodape_id }}"
-          echo "📝 Rodapé texto:    ${{ inputs.rodape_texto }}"
-          echo "🌐 Stream URL:      ${{ inputs.stream_url }}"
+          echo "🆔 ID: ${{ inputs.id }}"
+          echo "📽️ Vídeo principal: ${{ inputs.video_principal }}"
+          echo "📹 Rodapé ID: ${{ inputs.rodape_id }}"
+          echo "📝 Rodapé texto: ${{ inputs.rodape_texto }}"
+          echo "📼 Extras: ${{ inputs.videos_extras }}"
+          echo "🌐 URL de transmissão: ${{ inputs.stream_url }}"
 
       - name: 📥 Baixar rodapé com rclone (se existir)
         if: ${{ inputs.rodape_id != '' && inputs.rodape_id != null }}
         run: |
           mkdir -p artefatos
-          rclone copy "meudrive:${{ inputs.rodape_id }}" artefatos/ \
-            --drive-export-formats webm \
-            --config ~/.config/rclone/rclone.conf
+          rclone copy meudrive:${{ inputs.rodape_id }} artefatos/
 
       - name: 📄 Criar input.json com todos os dados corretamente
         run: |
@@ -120,7 +119,6 @@ jobs:
   transmitir-video:
     runs-on: ubuntu-latest
     needs: montar-video
-
     steps:
       - name: 📥 Clonar repositório
         uses: actions/checkout@v4
@@ -144,7 +142,7 @@ jobs:
       - name: 📝 Listar arquivos (debug opcional)
         run: ls -la
 
-      - name: ▶️ Transmitir vídeo final (.mp4) com rodapé
+      - name: ▶️ Transmitir vídeo final (.mp4)
         env:
           SERVER_STATUS_URL: ${{ secrets.SERVER_STATUS_URL }}
         run: node transmitir.js
