@@ -4,7 +4,7 @@ const { spawn } = require('child_process');
 
 const keyFile = process.env.KEYFILE || 'rclone.conf';
 const inputFile = process.env.INPUTFILE || 'input.json';
-const remoteName = 'meudrive';
+const remoteName = 'meudrive'; // Nome do remote usado no rclone.conf
 
 const arquivosTemporarios = [];
 
@@ -33,7 +33,7 @@ async function baixarArquivo(idArquivo, destino) {
   return new Promise((resolve, reject) => {
     const rclone = spawn('rclone', [
       'copy',
-      `${remoteName}:{${idArquivo}}`,
+      `${remoteName}:${idArquivo}`, // <-- Use ID direto, sem chaves {}
       '.',
       '--config', keyFile,
       '--drive-export-formats', 'mp4,webm'
@@ -159,6 +159,7 @@ async function main() {
   const ordem = [], extras = [];
 
   await baixarArquivo(input.video_principal, 'principal.mp4');
+
   const duracaoPrincipal = await obterDuracao('principal.mp4');
   const metade = Math.floor(duracaoPrincipal / 2);
 
