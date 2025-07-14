@@ -41,7 +41,6 @@ on:
 jobs:
   montar-video:
     runs-on: ubuntu-latest
-
     steps:
       - name: 📥 Clonar repositório
         uses: actions/checkout@v4
@@ -56,15 +55,13 @@ jobs:
       - name: 📄 Salvar rclone.conf
         run: |
           mkdir -p ~/.config/rclone
-          cat << 'EOF' > ~/.config/rclone/rclone.conf
-${{ inputs.rclone_conf }}
-EOF
+          echo "${{ inputs.rclone_conf }}" > ~/.config/rclone/rclone.conf
 
       - name: 📥 Baixar rodapé com rclone (se existir)
         if: ${{ inputs.rodape_id != '' && inputs.rodape_id != null }}
         run: |
           mkdir -p artefatos
-          rclone copy meudrive:{${{ inputs.rodape_id }}} artefatos/ --drive-export-formats webm
+          rclone copy meudrive:${{ inputs.rodape_id }} artefatos/
 
       - name: 📄 Criar input.json com todos os dados corretamente
         run: |
