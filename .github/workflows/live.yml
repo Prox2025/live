@@ -41,6 +41,7 @@ on:
 jobs:
   montar-video:
     runs-on: ubuntu-latest
+
     steps:
       - name: 📥 Clonar repositório
         uses: actions/checkout@v4
@@ -52,20 +53,27 @@ jobs:
           echo '{}' > package.json
           npm install puppeteer
 
-      - name: 📄 Salvar rclone.conf corretamente com quebras de linha
+      - name: 📄 Salvar rclone.conf
         run: |
           mkdir -p ~/.config/rclone
-          # Substitui '\n' literais por quebras reais para formato correto do arquivo
-          echo "${{ inputs.rclone_conf }}" | sed 's/\\n/\n/g' > ~/.config/rclone/rclone.conf
+          echo "${{ inputs.rclone_conf }}" > ~/.config/rclone/rclone.conf
+
+      - name: 📋 Verificar dados recebidos
+        run: |
+          echo "✅ ID:             ${{ inputs.id }}"
+          echo "📼 Vídeo principal: ${{ inputs.video_principal }}"
+          echo "🧩 Vídeos extras:   ${{ inputs.videos_extras }}"
+          echo "🖼️ Rodapé ID:       ${{ inputs.rodape_id }}"
+          echo "📝 Rodapé texto:    ${{ inputs.rodape_texto }}"
+          echo "🌐 Stream URL:      ${{ inputs.stream_url }}"
 
       - name: 📥 Baixar rodapé com rclone (se existir)
         if: ${{ inputs.rodape_id != '' && inputs.rodape_id != null }}
         run: |
           mkdir -p artefatos
-          # Corrigido para copiar arquivo direto pelo ID
-          rclone copy --config ~/.config/rclone/rclone.conf meudrive:{${
-            inputs.rodape_id
-          }} artefatos/
+          rclone copy "meudrive:${{ inputs.rodape_id }}" artefatos/ \
+            --drive-export-formats webm \
+            --config ~/.config/rclone/rclone.conf
 
       - name: 📄 Criar input.json com todos os dados corretamente
         run: |
@@ -107,11 +115,12 @@ jobs:
           path: |
             video_final_completo.mp4
             stream_info.json
-            artefatos/rodape.webm
+            artefatos/
 
   transmitir-video:
     runs-on: ubuntu-latest
     needs: montar-video
+
     steps:
       - name: 📥 Clonar repositório
         uses: actions/checkout@v4
