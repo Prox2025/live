@@ -41,6 +41,7 @@ on:
 jobs:
   montar-video:
     runs-on: ubuntu-latest
+
     steps:
       - name: 📥 Clonar repositório
         uses: actions/checkout@v4
@@ -52,21 +53,12 @@ jobs:
           echo '{}' > package.json
           npm install puppeteer
 
-      - name: 📄 Salvar rclone.conf
+      - name: 📄 Salvar rclone.conf com segurança
         run: |
           mkdir -p ~/.config/rclone
           cat <<EOF > ~/.config/rclone/rclone.conf
 ${{ inputs.rclone_conf }}
 EOF
-
-      - name: 📄 Validar dados recebidos
-        run: |
-          echo "🆔 ID: ${{ inputs.id }}"
-          echo "📽️ Vídeo principal: ${{ inputs.video_principal }}"
-          echo "📹 Rodapé ID: ${{ inputs.rodape_id }}"
-          echo "📝 Rodapé texto: ${{ inputs.rodape_texto }}"
-          echo "📼 Extras: ${{ inputs.videos_extras }}"
-          echo "🌐 URL de transmissão: ${{ inputs.stream_url }}"
 
       - name: 📥 Baixar rodapé com rclone (se existir)
         if: ${{ inputs.rodape_id != '' && inputs.rodape_id != null }}
@@ -104,6 +96,9 @@ EOF
             stream_url: $stream_url
           }' > input.json
 
+      - name: 📋 Verificar input.json
+        run: cat input.json
+
       - name: 🧠 Executar script de montagem
         run: node unir.js
 
@@ -114,11 +109,12 @@ EOF
           path: |
             video_final_completo.mp4
             stream_info.json
-            artefatos/
+            artefatos/rodape.webm
 
   transmitir-video:
     runs-on: ubuntu-latest
     needs: montar-video
+
     steps:
       - name: 📥 Clonar repositório
         uses: actions/checkout@v4
@@ -139,7 +135,7 @@ EOF
       - name: 📂 Copiar arquivos para diretório atual
         run: cp -r video_final/* .
 
-      - name: 📝 Listar arquivos (debug opcional)
+      - name: 📝 Listar arquivos (debug)
         run: ls -la
 
       - name: ▶️ Transmitir vídeo final (.mp4)
