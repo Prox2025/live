@@ -56,7 +56,9 @@ jobs:
       - name: 📄 Salvar rclone.conf
         run: |
           mkdir -p ~/.config/rclone
-          echo "${{ inputs.rclone_conf }}" > ~/.config/rclone/rclone.conf
+          cat << 'EOF' > ~/.config/rclone/rclone.conf
+${{ inputs.rclone_conf }}
+EOF
 
       - name: 📥 Baixar rodapé com rclone (se existir)
         if: ${{ inputs.rodape_id != '' && inputs.rodape_id != null }}
