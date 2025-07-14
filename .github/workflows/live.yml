@@ -34,7 +34,7 @@ on:
         type: string
 
       rclone_conf:
-        description: 'Conteúdo do rclone.conf'
+        description: 'Conteúdo do rclone.conf codificado em base64'
         required: true
         type: string
 
@@ -53,12 +53,10 @@ jobs:
           echo '{}' > package.json
           npm install puppeteer
 
-      - name: 📄 Salvar rclone.conf com segurança
+      - name: 📄 Salvar rclone.conf (decodificado de base64)
         run: |
           mkdir -p ~/.config/rclone
-          cat <<EOF > ~/.config/rclone/rclone.conf
-${{ inputs.rclone_conf }}
-EOF
+          echo "${{ inputs.rclone_conf }}" | base64 -d > ~/.config/rclone/rclone.conf
 
       - name: 📥 Baixar rodapé com rclone (se existir)
         if: ${{ inputs.rodape_id != '' && inputs.rodape_id != null }}
@@ -96,9 +94,6 @@ EOF
             stream_url: $stream_url
           }' > input.json
 
-      - name: 📋 Verificar input.json
-        run: cat input.json
-
       - name: 🧠 Executar script de montagem
         run: node unir.js
 
@@ -135,10 +130,10 @@ EOF
       - name: 📂 Copiar arquivos para diretório atual
         run: cp -r video_final/* .
 
-      - name: 📝 Listar arquivos (debug)
+      - name: 📝 Listar arquivos (debug opcional)
         run: ls -la
 
-      - name: ▶️ Transmitir vídeo final (.mp4)
+      - name: ▶️ Transmitir vídeo final (.mp4) com rodapé
         env:
           SERVER_STATUS_URL: ${{ secrets.SERVER_STATUS_URL }}
         run: node transmitir.js
