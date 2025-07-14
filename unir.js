@@ -4,7 +4,7 @@ const { spawn } = require('child_process');
 
 const keyFile = process.env.KEYFILE || 'rclone.conf';
 const inputFile = process.env.INPUTFILE || 'input.json';
-const remoteName = 'meudrive'; // Nome do remote usado no rclone.conf
+const remoteName = 'meudrive';
 
 const arquivosTemporarios = [];
 
@@ -27,15 +27,14 @@ function executarFFmpeg(args, output) {
   });
 }
 
-async function baixarArquivo(folderId, destino) {
-  if (!folderId) throw new Error(`❌ ID ausente para ${destino}`);
+async function baixarArquivo(idArquivo, destino) {
+  if (!idArquivo) throw new Error(`❌ ID ausente para ${destino}`);
 
   return new Promise((resolve, reject) => {
     const rclone = spawn('rclone', [
       'copy',
-      `${remoteName}:`,
+      `${remoteName}:{${idArquivo}}`,
       '.',
-      '--drive-root-folder-id', folderId,
       '--config', keyFile,
       '--drive-export-formats', 'mp4,webm'
     ]);
@@ -46,14 +45,14 @@ async function baixarArquivo(folderId, destino) {
         const baixado = fs.readdirSync('.')
           .find(f => f.endsWith('.mp4') || f.endsWith('.webm'));
         if (!baixado) {
-          return reject(new Error(`❌ Nenhum arquivo encontrado após baixar ${folderId}`));
+          return reject(new Error(`❌ Nenhum arquivo encontrado após baixar ${idArquivo}`));
         }
         fs.renameSync(baixado, destino);
         registrarTemporario(destino);
         console.log(`📥 Baixado via rclone: ${destino}`);
         resolve();
       } else {
-        reject(new Error(`❌ rclone falhou ao baixar ${folderId}`));
+        reject(new Error(`❌ rclone falhou ao baixar ${idArquivo}`));
       }
     });
   });
@@ -160,7 +159,6 @@ async function main() {
   const ordem = [], extras = [];
 
   await baixarArquivo(input.video_principal, 'principal.mp4');
-
   const duracaoPrincipal = await obterDuracao('principal.mp4');
   const metade = Math.floor(duracaoPrincipal / 2);
 
