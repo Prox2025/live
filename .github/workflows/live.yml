@@ -33,8 +33,8 @@ on:
         required: false
         type: string
 
-      chave_json:
-        description: 'Conteúdo da chave JSON do Google Drive'
+      rclone_conf:
+        description: 'Conteúdo do rclone.conf'
         required: true
         type: string
 
@@ -49,50 +49,20 @@ jobs:
       - name: 📦 Instalar dependências
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg jq
+          sudo apt install -y ffmpeg jq rclone
           echo '{}' > package.json
-          npm install googleapis puppeteer
+          npm install puppeteer
 
-      - name: 📄 Salvar chave.json
+      - name: 📄 Salvar rclone.conf
         run: |
-          echo '${{ secrets.SACREDI_JSON }}' > sacredi.json
-          echo '${{ inputs.chave_json }}' > chave.json
+          mkdir -p ~/.config/rclone
+          echo "${{ inputs.rclone_conf }}" > ~/.config/rclone/rclone.conf
 
-      - name: 📥 Baixar rodapé do Google Drive
+      - name: 📥 Baixar rodapé com rclone (se existir)
         if: ${{ inputs.rodape_id != '' && inputs.rodape_id != null }}
         run: |
-          node <<EOF
-          const fs = require('fs');
-          const { google } = require('googleapis');
-
-          const auth = new google.auth.GoogleAuth({
-            credentials: JSON.parse(fs.readFileSync('chave.json')),
-            scopes: ['https://www.googleapis.com/auth/drive.readonly']
-          });
-
-          async function baixarRodape() {
-            const drive = google.drive({ version: 'v3', auth: await auth.getClient() });
-
-            // ✅ Criar diretório artefatos se não existir
-            if (!fs.existsSync('artefatos')) {
-              fs.mkdirSync('artefatos', { recursive: true });
-            }
-
-            const dest = fs.createWriteStream('artefatos/rodape.webm');
-            const res = await drive.files.get(
-              { fileId: '${{ inputs.rodape_id }}', alt: 'media' },
-              { responseType: 'stream' }
-            );
-
-            await new Promise((resolve, reject) => {
-              res.data.pipe(dest).on('finish', resolve).on('error', reject);
-            });
-
-            console.log('✅ rodape.webm baixado com sucesso!');
-          }
-
-          baixarRodape();
-          EOF
+          mkdir -p artefatos
+          rclone copy meudrive:{${{ inputs.rodape_id }}} artefatos/ --drive-export-formats webm
 
       - name: 📄 Criar input.json com todos os dados corretamente
         run: |
