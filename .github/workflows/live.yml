@@ -51,9 +51,9 @@ jobs:
           mkdir -p ~/.config/rclone
           echo "${{ inputs.rclone_conf }}" | base64 -d > ~/.config/rclone/rclone.conf
 
-      - name: 📄 Decodificar SACREDI_BASE64 para sacredi.json
+      - name: 📄 Salvar sacredi.json diretamente do segredo JSON puro
         run: |
-          echo "${{ secrets.SACREDI_BASE64 }}" | base64 -d > sacredi.json
+          echo "${{ secrets.SACREDI_JSON }}" > sacredi.json
           echo "📄 Conteúdo decodificado de sacredi.json:"
           cat sacredi.json
           echo "--- FIM ---"
@@ -76,7 +76,7 @@ jobs:
             --arg stream_url "${{ inputs.stream_url }}" \
             --slurpfile sacredi sacredi.json \
             --slurpfile extras extras.json \
-            '($sacredi | try .[0] catch {}) as $s | {
+            '($sacredi[0]) as $s | {
               id: $id,
               video_principal: $video_principal,
               video_inicial: ($s.video_inicial // ""),
