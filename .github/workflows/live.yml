@@ -76,19 +76,21 @@ jobs:
             --arg rodape_texto "${{ inputs.rodape_texto }}" \
             --arg stream_url "${{ inputs.stream_url }}" \
             --slurpfile sacredi sacredi.json \
-            --slurpfile extras extras.json \
-          '{
-            id: $id,
-            video_principal: $video_principal,
-            video_inicial: $sacredi[0].video_inicial,
-            video_miraplay: $sacredi[0].video_miraplay,
-            video_final: $sacredi[0].video_final,
-            logo_id: $sacredi[0].logo_id,
-            rodape_id: $rodape_id,
-            rodape_texto: $rodape_texto,
-            videos_extras: $extras[0],
-            stream_url: $stream_url
-          }' > input.json
+            --slurpfile extras extras.json '
+              ($sacredi[0]) as $s |
+              {
+                id: $id,
+                video_principal: $video_principal,
+                video_inicial: $s.video_inicial,
+                video_miraplay: $s.video_miraplay,
+                video_final: $s.video_final,
+                logo_id: $s.logo_id,
+                rodape_id: $rodape_id,
+                rodape_texto: $rodape_texto,
+                videos_extras: $extras[0],
+                stream_url: $stream_url
+              }
+            ' > input.json
 
       - name: 📂 Mostrar input.json final
         run: |
