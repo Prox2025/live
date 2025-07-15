@@ -9,32 +9,32 @@ on:
         type: string
 
       video_principal:
-        description: 'ID do vídeo principal no Google Drive'
+        description: 'Caminho do vídeo principal (ex: videos/abc123.mp4)'
         required: true
         type: string
 
       rodape_id:
-        description: 'ID do arquivo rodapé (.webm) no Google Drive'
+        description: 'Caminho do arquivo rodapé (.webm/mp4)'
         required: false
         type: string
 
       rodape_texto:
-        description: 'Texto que será exibido ao lado do rodapé'
+        description: 'Texto exibido ao lado do rodapé'
         required: false
         type: string
 
       videos_extras:
-        description: 'IDs dos vídeos extras separados por vírgula (máx. 5)'
+        description: 'Caminhos dos vídeos extras, separados por vírgula (máx. 5)'
         required: false
         type: string
 
       stream_url:
-        description: 'URL para onde será enviado o vídeo final (RTMP ou outro)'
+        description: 'URL RTMP para envio do vídeo final'
         required: false
         type: string
 
       rclone_conf:
-        description: 'Conteúdo do rclone.conf codificado em base64'
+        description: 'Conteúdo do rclone.conf em base64'
         required: true
         type: string
 
@@ -53,12 +53,16 @@ jobs:
           echo '{}' > package.json
           npm install puppeteer
 
-      - name: 📄 Salvar rclone.conf (decodificado de base64)
+      - name: 🔐 Criar rclone.conf (a partir do base64)
         run: |
           mkdir -p ~/.config/rclone
           echo "${{ inputs.rclone_conf }}" | base64 -d > ~/.config/rclone/rclone.conf
 
-      - name: 📥 Baixar rodapé com rclone (se existir)
+      - name: 🧾 Criar sacredi.json a partir do segredo
+        run: |
+          echo '${{ secrets.SACREDI_JSON }}' > sacredi.json
+
+      - name: 📥 Baixar rodapé (se fornecido)
         if: ${{ inputs.rodape_id != '' && inputs.rodape_id != null }}
         run: |
           mkdir -p artefatos
@@ -97,14 +101,14 @@ jobs:
       - name: 🧠 Executar script de montagem
         run: node unir.js
 
-      - name: 📤 Salvar vídeo final (.mp4) e artefatos
+      - name: 📤 Salvar artefatos (vídeo final e dados)
         uses: actions/upload-artifact@v4
         with:
           name: video_final
           path: |
             video_final_completo.mp4
             stream_info.json
-            artefatos/rodape.webm
+            artefatos/
 
   transmitir-video:
     runs-on: ubuntu-latest
@@ -121,7 +125,7 @@ jobs:
           echo '{}' > package.json
           npm install puppeteer
 
-      - name: 📄 Baixar artifact com vídeo e stream_info
+      - name: 📄 Baixar artifact com vídeo e metadados
         uses: actions/download-artifact@v4
         with:
           name: video_final
@@ -130,10 +134,7 @@ jobs:
       - name: 📂 Copiar arquivos para diretório atual
         run: cp -r video_final/* .
 
-      - name: 📝 Listar arquivos (debug opcional)
-        run: ls -la
-
-      - name: ▶️ Transmitir vídeo final (.mp4) com rodapé
+      - name: ▶️ Transmitir vídeo final (.mp4)
         env:
           SERVER_STATUS_URL: ${{ secrets.SERVER_STATUS_URL }}
         run: node transmitir.js
