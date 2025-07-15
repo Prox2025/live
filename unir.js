@@ -5,7 +5,6 @@ const { spawn } = require('child_process');
 
 const keyFile = path.join(os.homedir(), '.config', 'rclone', 'rclone.conf');
 const inputFile = process.env.INPUTFILE || 'input.json';
-
 const arquivosTemporarios = [];
 
 function registrarTemporario(caminho) {
@@ -27,27 +26,31 @@ function executarFFmpeg(args, output) {
   });
 }
 
+async function reencode(input, output) {
+  await executarFFmpeg([
+    '-i', input,
+    '-vf', 'scale=1280:720',
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '23',
+    '-c:a', 'aac',
+    output
+  ], output);
+  registrarTemporario(output);
+}
+
 async function baixarArquivo(caminhoRclone, destino) {
-  if (!caminhoRclone) throw new Error(`❌ Caminho ausente para ${destino}`);
   return new Promise((resolve, reject) => {
-    const rclone = spawn('rclone', [
-      'copy', `meudrive:${caminhoRclone}`, '.',
-      '--config', keyFile
-    ]);
+    const rclone = spawn('rclone', ['copy', `meudrive:${caminhoRclone}`, '.', '--config', keyFile]);
     rclone.stderr.on('data', data => process.stderr.write(data));
     rclone.on('close', code => {
-      if (code === 0) {
-        const nomeArquivo = path.basename(caminhoRclone);
-        if (!fs.existsSync(nomeArquivo)) {
-          return reject(new Error(`❌ Arquivo não encontrado após download: ${nomeArquivo}`));
-        }
-        fs.renameSync(nomeArquivo, destino);
-        registrarTemporario(destino);
-        console.log(`📥 Baixado: ${destino}`);
-        resolve();
-      } else {
-        reject(new Error(`❌ Falha no rclone para ${caminhoRclone}`));
-      }
+      if (code !== 0) return reject(new Error(`❌ Falha no rclone para ${caminhoRclone}`));
+      const nomeArquivo = path.basename(caminhoRclone);
+      if (!fs.existsSync(nomeArquivo)) return reject(new Error(`❌ Arquivo não encontrado após download: ${nomeArquivo}`));
+      fs.renameSync(nomeArquivo, destino);
+      registrarTemporario(destino);
+      console.log(`📥 Baixado: ${destino}`);
+      resolve();
     });
   });
 }
@@ -67,28 +70,14 @@ async function obterDuracao(video) {
   });
 }
 
-// Padroniza o vídeo para 1280x720 (16:9), mantendo proporção e adicionando padding preto
-async function padronizarVideo(input, output) {
-  await executarFFmpeg([
-    '-i', input,
-    '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1',
-    '-c:v', 'libx264',
-    '-preset', 'fast',
-    '-crf', '23',
-    '-c:a', 'aac',
-    '-b:a', '128k',
-    output
-  ], output);
-}
-
 async function cortarTrecho(input, inicio, duracao, output) {
   await executarFFmpeg([
     '-i', input,
     '-ss', inicio.toString(),
     '-t', duracao.toString(),
     '-c:v', 'libx264',
-    '-preset', 'fast',
     '-crf', '23',
+    '-preset', 'veryfast',
     '-c:a', 'aac',
     '-b:a', '128k',
     output
@@ -97,8 +86,7 @@ async function cortarTrecho(input, inicio, duracao, output) {
 
 async function aplicarLogo(input, output) {
   if (!fs.existsSync('logo.png')) {
-    // Se não existe logo.png, só faz o padronizar para 1280x720
-    await padronizarVideo(input, output);
+    fs.copyFileSync(input, output);
     return;
   }
 
@@ -106,27 +94,13 @@ async function aplicarLogo(input, output) {
     '-i', input,
     '-i', 'logo.png',
     '-filter_complex',
-    '[1:v]scale=iw/7:-1[logo];[0:v][logo]overlay=W-w-10:10',
+    '[1:v]scale=100:-1[logo];[0:v][logo]overlay=W-w-10:10',
     '-c:v', 'libx264',
-    '-preset', 'fast',
     '-crf', '23',
+    '-preset', 'veryfast',
     '-c:a', 'aac',
-    '-b:a', '128k',
     output
   ], output);
-}
-
-async function gerarRodapePadrao(nome, duracao = 5) {
-  await executarFFmpeg([
-    '-f', 'lavfi',
-    '-i', 'color=black:s=1280x120',
-    '-t', duracao.toString(),
-    '-c:v', 'libx264',
-    '-preset', 'fast',
-    '-crf', '23',
-    '-pix_fmt', 'yuv420p',
-    nome
-  ], nome);
 }
 
 async function inserirRodape(video, rodape, saida, tempoRodape, pontoInsercao) {
@@ -143,10 +117,10 @@ async function inserirRodape(video, rodape, saida, tempoRodape, pontoInsercao) {
     '-i', trechoComRodape,
     '-i', rodape,
     '-filter_complex',
-    `[0:v]scale=1280:600,pad=1280:720:0:0:black,setsar=1[vid];[1:v]scale=1280:120[rod];[vid][rod]overlay=0:H-h`,
+    `[0:v]scale=1280:720[vid];[1:v]scale=1280:-1[rod];[vid][rod]overlay=0:H-h`,
     '-c:v', 'libx264',
-    '-preset', 'fast',
     '-crf', '23',
+    '-preset', 'veryfast',
     '-c:a', 'aac',
     '-b:a', '128k',
     combinado
@@ -177,61 +151,59 @@ async function main() {
     if (!input[campo]) throw new Error(`❌ Campo obrigatório ausente no input.json: ${campo}`);
   }
 
+  // Baixar logo e rodapé
+  await baixarArquivo(input.logo_id, 'logo.png');
   if (input.rodape_id) {
-    await baixarArquivo(input.rodape_id, 'rodape.mp4');
-  } else {
-    await gerarRodapePadrao('rodape.mp4');
+    await baixarArquivo(input.rodape_id, 'rodape_origem.mp4');
+    await reencode('rodape_origem.mp4', 'rodape.mp4');
   }
 
-  const durRodape = await obterDuracao('rodape.mp4');
-  const ordem = [], extras = [];
-
-  // Baixar vídeo principal e padronizar
+  // Processar vídeo principal
   await baixarArquivo(input.video_principal, 'principal_origem.mp4');
-  await padronizarVideo('principal_origem.mp4', 'principal.mp4');
+  await reencode('principal_origem.mp4', 'principal.mp4');
 
-  const duracaoPrincipal = await obterDuracao('principal.mp4');
-  const metade = Math.floor(duracaoPrincipal / 2);
-  const pontoInsercao = Math.min(240, metade - durRodape);
+  const durRodape = await obterDuracao('rodape.mp4');
+  const pontoInsercao = 240;
 
-  // Cortar primeira metade, inserir rodapé e aplicar logo
+  const metade = Math.floor(await obterDuracao('principal.mp4') / 2);
+
   await cortarTrecho('principal.mp4', 0, metade, 'parte1.mp4');
   await inserirRodape('parte1.mp4', 'rodape.mp4', 'parte1_final.mp4', durRodape, pontoInsercao);
   await aplicarLogo('parte1_final.mp4', 'parte1_logo.mp4');
 
-  // Cortar segunda metade, inserir rodapé e aplicar logo
-  await cortarTrecho('principal.mp4', metade, duracaoPrincipal - metade, 'parte2.mp4');
+  await cortarTrecho('principal.mp4', metade, 9999, 'parte2.mp4');
   await inserirRodape('parte2.mp4', 'rodape.mp4', 'parte2_final.mp4', durRodape, pontoInsercao);
   await aplicarLogo('parte2_final.mp4', 'parte2_logo.mp4');
 
-  // Baixar e padronizar vídeos extras
+  // Processar extras
+  const extras = [];
   for (let i = 0; i < (input.videos_extras || []).length; i++) {
-    const caminhoExtra = input.videos_extras[i];
-    const nome = `extra_${i}_orig.mp4`;
-    await baixarArquivo(caminhoExtra, nome);
-
-    const nomePadronizado = `extra_${i}.mp4`;
-    await padronizarVideo(nome, nomePadronizado);
-    extras.push(nomePadronizado);
+    const nome = `extra_${i}.mp4`;
+    await baixarArquivo(input.videos_extras[i], `extra_${i}_origem.mp4`);
+    await reencode(`extra_${i}_origem.mp4`, nome);
+    extras.push(nome);
   }
 
-  // Baixar vídeos iniciais, miraplay e final e padronizar também
+  // Processar vídeos auxiliares
   await baixarArquivo(input.video_inicial, 'inicial_origem.mp4');
-  await padronizarVideo('inicial_origem.mp4', 'inicial.mp4');
+  await reencode('inicial_origem.mp4', 'inicial.mp4');
 
   await baixarArquivo(input.video_miraplay, 'miraplay_origem.mp4');
-  await padronizarVideo('miraplay_origem.mp4', 'miraplay.mp4');
+  await reencode('miraplay_origem.mp4', 'miraplay.mp4');
 
   await baixarArquivo(input.video_final, 'final_origem.mp4');
-  await padronizarVideo('final_origem.mp4', 'final.mp4');
+  await reencode('final_origem.mp4', 'final.mp4');
 
-  ordem.push('parte1_logo.mp4');
-  ordem.push('inicial.mp4');
-  ordem.push('miraplay.mp4');
-  ordem.push(...extras);
-  ordem.push('inicial.mp4');
-  ordem.push('parte2_logo.mp4');
-  ordem.push('final.mp4');
+  // Unir todos
+  const ordem = [
+    'parte1_logo.mp4',
+    'inicial.mp4',
+    'miraplay.mp4',
+    ...extras,
+    'inicial.mp4',
+    'parte2_logo.mp4',
+    'final.mp4'
+  ];
 
   await unirFinal(ordem, 'video_final_completo.mp4');
 
