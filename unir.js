@@ -54,27 +54,25 @@ async function dividirVideo(video, parte1, parte2) {
 async function baixarArquivo(remoto, destino) {
   return new Promise((resolve, reject) => {
     const rclone = spawn('rclone', ['copy', `meudrive:${remoto}`, '.', '--config', keyFile]);
-    
+
     rclone.stderr.on('data', data => process.stderr.write(data));
-    
+
     rclone.on('close', async code => {
       if (code === 0) {
         const nome = path.basename(remoto);
         if (!fs.existsSync(nome)) return reject(new Error(`Arquivo não encontrado: ${nome}`));
-        
+
         fs.renameSync(nome, destino);
         registrarTemporario(destino);
 
         const extensao = path.extname(destino).toLowerCase();
 
-        // Só reencoda se o arquivo for vídeo (mp4, webm, mov)
         if (['.mp4', '.webm', '.mov'].includes(extensao)) {
           const temporario = destino.replace(/(\.[^.]+)$/, '_temp$1');
           await reencode(destino, temporario);
           fs.renameSync(temporario, destino);
           console.log(`📥 Vídeo baixado e reencodado: ${destino}`);
         } else {
-          // Caso contrário, apenas loga que é uma imagem ou outro arquivo
           console.log(`📥 Arquivo de imagem baixado: ${destino}`);
         }
 
