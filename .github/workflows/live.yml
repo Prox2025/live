@@ -53,7 +53,7 @@ jobs:
 
       - name: 📄 Salvar sacredi.json diretamente do segredo JSON puro
         run: |
-          echo "${{ secrets.SACREDI_JSON }}" > sacredi.json
+          printf '%s' "${{ secrets.SACREDI_JSON }}" > sacredi.json
           echo "📄 Conteúdo decodificado de sacredi.json:"
           cat sacredi.json
           echo "--- FIM ---"
