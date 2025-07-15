@@ -31,10 +31,6 @@ on:
         description: 'Conteúdo base64 do rclone.conf'
         required: true
         type: string
-      SACREDI_BASE64:
-        description: 'Conteúdo base64 do JSON sacredi'
-        required: true
-        type: string
 
 jobs:
   montar-video:
@@ -57,12 +53,12 @@ jobs:
 
       - name: 📄 Decodificar SACREDI_BASE64 para sacredi.json
         run: |
-          echo "${{ inputs.SACREDI_BASE64 }}" | base64 -d > sacredi.json
+          echo "${{ secrets.SACREDI_BASE64 }}" | base64 -d > sacredi.json
           echo "📄 Conteúdo decodificado de sacredi.json:"
           cat sacredi.json
           echo "--- FIM ---"
 
-      - name: 🧾 Processar vídeos extras
+      - name: 📃 Processar vídeos extras
         run: |
           if [ -z "${{ inputs.videos_extras }}" ]; then
             echo "[]" > extras.json
@@ -70,9 +66,6 @@ jobs:
             IFS=',' read -ra EXTRAS <<< "${{ inputs.videos_extras }}"
             printf '%s\n' "${EXTRAS[@]}" | jq -R . | jq -s . > extras.json
           fi
-          echo "📄 Conteúdo de extras.json:"
-          cat extras.json
-          echo "--- FIM ---"
 
       - name: 📝 Criar input.json com todos os dados
         run: |
@@ -87,13 +80,13 @@ jobs:
           '{
             id: $id,
             video_principal: $video_principal,
-            video_inicial: ($sacredi[0].video_inicial // null),
-            video_miraplay: ($sacredi[0].video_miraplay // null),
-            video_final: ($sacredi[0].video_final // null),
-            logo_id: ($sacredi[0].logo_id // null),
+            video_inicial: $sacredi[0].video_inicial,
+            video_miraplay: $sacredi[0].video_miraplay,
+            video_final: $sacredi[0].video_final,
+            logo_id: $sacredi[0].logo_id,
             rodape_id: $rodape_id,
             rodape_texto: $rodape_texto,
-            videos_extras: ($extras // []),
+            videos_extras: $extras[0],
             stream_url: $stream_url
           }' > input.json
 
