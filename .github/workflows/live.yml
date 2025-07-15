@@ -32,6 +32,9 @@ on:
         required: true
         type: string
 
+env:
+  SACREDI_BASE64: ${{ secrets.SACREDI_JSON }}
+
 jobs:
   montar-video:
     runs-on: ubuntu-latest
@@ -58,7 +61,7 @@ jobs:
           cat sacredi.json
           echo "--- FIM ---"
 
-      - name: 🧾 Processar vídeos extras
+      - name: 📄 Criar extras.json
         run: |
           if [ -z "${{ inputs.videos_extras }}" ]; then
             echo "[]" > extras.json
@@ -72,14 +75,13 @@ jobs:
 
       - name: 📝 Criar input.json com todos os dados
         run: |
-          export SACREDI=$(cat sacredi.json)
           jq -n \
             --arg id "${{ inputs.id }}" \
             --arg video_principal "${{ inputs.video_principal }}" \
             --arg rodape_id "${{ inputs.rodape_id }}" \
             --arg rodape_texto "${{ inputs.rodape_texto }}" \
             --arg stream_url "${{ inputs.stream_url }}" \
-            --argjson sacredi "$SACREDI" \
+            --slurpfile sacredi sacredi.json \
             --slurpfile extras extras.json \
           '{
             id: $id,
@@ -115,7 +117,6 @@ jobs:
   transmitir-video:
     runs-on: ubuntu-latest
     needs: montar-video
-
     steps:
       - name: 📥 Clonar repositório
         uses: actions/checkout@v4
@@ -138,4 +139,3 @@ jobs:
 
       - name: ▶️ Transmitir vídeo com FFmpeg
         run: node transmitir.js
-
