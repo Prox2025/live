@@ -41,8 +41,6 @@ on:
 jobs:
   montar-video:
     runs-on: ubuntu-latest
-    env:
-      SACREDI_BASE64: ${{ secrets.SACREDI_BASE64 }}
 
     steps:
       - name: 📥 Clonar repositório
@@ -55,9 +53,17 @@ jobs:
           echo '{}' > package.json
           npm install puppeteer
 
-      - name: 📄 Decodificar SACREDI_BASE64 para sacredi.json
+      - name: 📄 Criar configuração do rclone (decodificar base64)
         run: |
-          echo "$SACREDI_BASE64" | base64 -d > sacredi.json
+          mkdir -p ~/.config/rclone
+          echo "${{ inputs.rclone_conf }}" | base64 -d > ~/.config/rclone/rclone.conf
+
+      - name: 🐛 Debug: exibir rclone.conf
+        run: cat ~/.config/rclone/rclone.conf
+
+      - name: 📄 Criar arquivo sacredi.json a partir do segredo base64
+        run: |
+          echo "${{ secrets.SACREDI_BASE64 }}" | base64 -d > sacredi.json
           echo "📄 Conteúdo decodificado de sacredi.json:"
           cat sacredi.json
           echo "--- FIM ---"
@@ -68,19 +74,18 @@ jobs:
           mkdir -p artefatos
           rclone copy meudrive:${{ inputs.rodape_id }} artefatos/
 
-      - name: 📄 Preparar vídeos extras JSON
+      - name: 📄 Processar videos_extras e criar extras.json
         run: |
           if [ -z "${{ inputs.videos_extras }}" ]; then
-            echo '[]' > extras.json
+            echo "[]" > extras.json
           else
             IFS=',' read -ra EXTRAS <<< "${{ inputs.videos_extras }}"
             printf '%s\n' "${EXTRAS[@]}" | jq -R . | jq -s . > extras.json
           fi
-          echo "📄 Conteúdo de extras.json:"
+          echo "Extras processados:"
           cat extras.json
-          echo "--- FIM ---"
 
-      - name: 📄 Criar input.json com todos os dados
+      - name: 📄 Criar input.json para script node
         run: |
           jq -n \
             --arg id "${{ inputs.id }}" \
@@ -90,23 +95,25 @@ jobs:
             --arg stream_url "${{ inputs.stream_url }}" \
             --slurpfile sacredi sacredi.json \
             --slurpfile extras extras.json \
-          '{
-            id: $id,
-            video_principal: $video_principal,
-            video_inicial: $sacredi[0].video_inicial,
-            video_miraplay: $sacredi[0].video_miraplay,
-            video_final: $sacredi[0].video_final,
-            logo_id: $sacredi[0].logo_id,
-            rodape_id: $rodape_id,
-            rodape_texto: $rodape_texto,
-            videos_extras: $extras,
-            stream_url: $stream_url
-          }' > input.json
+            '{
+              id: $id,
+              video_principal: $video_principal,
+              video_inicial: $sacredi[0].video_inicial,
+              video_miraplay: $sacredi[0].video_miraplay,
+              video_final: $sacredi[0].video_final,
+              logo_id: $sacredi[0].logo_id,
+              rodape_id: $rodape_id,
+              rodape_texto: $rodape_texto,
+              videos_extras: $extras[0],
+              stream_url: $stream_url
+            }' > input.json
+          echo "📄 Conteúdo de input.json:"
+          cat input.json
 
-      - name: 🧠 Executar script de montagem
+      - name: 🧠 Executar script de montagem (Node.js)
         run: node unir.js
 
-      - name: 📤 Salvar vídeo final (.mp4) e artefatos
+      - name: 📤 Salvar vídeo final e artefatos
         uses: actions/upload-artifact@v4
         with:
           name: video_final
