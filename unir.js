@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { spawn } = require('child_process');
 
-const keyFile = process.env.KEYFILE || 'rclone.conf';
+const keyFile = path.join(os.homedir(), '.config', 'rclone', 'rclone.conf');
 const inputFile = process.env.INPUTFILE || 'input.json';
 
 const arquivosTemporarios = [];
@@ -29,13 +30,18 @@ function executarFFmpeg(args, output) {
 async function baixarArquivo(caminhoRclone, destino) {
   if (!caminhoRclone) throw new Error(`❌ Caminho ausente para ${destino}`);
   return new Promise((resolve, reject) => {
-    const rclone = spawn('rclone', ['copyto', `meudrive:${caminhoRclone}`, destino, '--config', path.resolve(keyFile)]);
+    const rclone = spawn('rclone', [
+      'copy', `meudrive:${caminhoRclone}`, '.',
+      '--config', keyFile
+    ]);
     rclone.stderr.on('data', data => process.stderr.write(data));
     rclone.on('close', code => {
       if (code === 0) {
-        if (!fs.existsSync(destino)) {
-          return reject(new Error(`❌ Arquivo não encontrado após download: ${destino}`));
+        const nomeArquivo = path.basename(caminhoRclone);
+        if (!fs.existsSync(nomeArquivo)) {
+          return reject(new Error(`❌ Arquivo não encontrado após download: ${nomeArquivo}`));
         }
+        fs.renameSync(nomeArquivo, destino);
         registrarTemporario(destino);
         console.log(`📥 Baixado: ${destino}`);
         resolve();
@@ -161,7 +167,6 @@ async function main() {
   }
 
   const durRodape = await obterDuracao('rodape.mp4');
-
   const ordem = [], extras = [];
 
   await baixarArquivo(input.video_principal, 'principal.mp4');
