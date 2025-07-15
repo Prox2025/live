@@ -28,25 +28,21 @@ function executarFFmpeg(args, output) {
 
 async function baixarArquivo(caminhoRclone, destino) {
   if (!caminhoRclone) throw new Error(`❌ Caminho ausente para ${destino}`);
-
   return new Promise((resolve, reject) => {
-    // Atenção: sem chaves {}, usar caminho direto no remote
     const rclone = spawn('rclone', ['copy', `meudrive:${caminhoRclone}`, '.', '--config', keyFile]);
-
     rclone.stderr.on('data', data => process.stderr.write(data));
     rclone.on('close', code => {
       if (code === 0) {
-        // Procurar arquivo baixado com o nome original (última parte do caminho)
         const nomeArquivo = path.basename(caminhoRclone);
         if (!fs.existsSync(nomeArquivo)) {
           return reject(new Error(`❌ Arquivo não encontrado após download: ${nomeArquivo}`));
         }
         fs.renameSync(nomeArquivo, destino);
         registrarTemporario(destino);
-        console.log(`📥 Baixado via rclone: ${destino}`);
+        console.log(`📥 Baixado: ${destino}`);
         resolve();
       } else {
-        reject(new Error(`❌ rclone falhou ao baixar ${caminhoRclone}`));
+        reject(new Error(`❌ Falha no rclone para ${caminhoRclone}`));
       }
     });
   });
@@ -111,7 +107,6 @@ async function inserirRodape(video, rodape, saida, tempoRodape, pontoInsercao) {
   await cortarTrecho(video, pontoInsercao + tempoRodape, 9999, depois);
   await cortarTrecho(video, pontoInsercao, tempoRodape, trechoComRodape);
 
-  // Aplicar redimensionamento + rodapé
   await executarFFmpeg([
     '-i', trechoComRodape,
     '-i', rodape,
@@ -125,7 +120,6 @@ async function inserirRodape(video, rodape, saida, tempoRodape, pontoInsercao) {
     combinado
   ], combinado);
 
-  // Concatenar partes
   const listaConcat = saida + '_lista.txt';
   fs.writeFileSync(listaConcat, [
     `file '${path.resolve(antes)}'`,
@@ -143,7 +137,13 @@ async function unirFinal(arquivos, saida) {
 }
 
 async function main() {
+  if (!fs.existsSync(inputFile)) throw new Error(`Arquivo de entrada não encontrado: ${inputFile}`);
   const input = JSON.parse(fs.readFileSync(inputFile));
+
+  const camposObrigatorios = ['id', 'video_principal', 'video_inicial', 'video_miraplay', 'video_final', 'logo_id', 'stream_url'];
+  for (const campo of camposObrigatorios) {
+    if (!input[campo]) throw new Error(`❌ Campo obrigatório ausente no input.json: ${campo}`);
+  }
 
   if (input.rodape_id) {
     await baixarArquivo(input.rodape_id, 'rodape.mp4');
@@ -155,7 +155,6 @@ async function main() {
   const ordem = [], extras = [];
 
   await baixarArquivo(input.video_principal, 'principal.mp4');
-
   const duracaoPrincipal = await obterDuracao('principal.mp4');
   const metade = Math.floor(duracaoPrincipal / 2);
 
@@ -205,6 +204,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error('❌ Erro no processamento:', err);
+  console.error('❌ Erro no processamento:', err.message || err);
   process.exit(1);
 });
