@@ -67,6 +67,24 @@ async function obterDuracao(video) {
   });
 }
 
+async function padronizarVideo(input, output, referencia = 'principal.mp4') {
+  const args = [
+    '-i', input,
+    '-i', referencia,
+    '-filter_complex',
+    '[1:v]nullref[vref];[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1[vout]',
+    '-map', '[vout]',
+    '-map', '0:a?',
+    '-c:v', 'libx264',
+    '-preset', 'fast',
+    '-crf', '23',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    output
+  ];
+  await executarFFmpeg(args, output);
+}
+
 async function cortarTrecho(input, inicio, duracao, output) {
   await executarFFmpeg([
     '-i', input,
@@ -167,7 +185,6 @@ async function main() {
   }
 
   const durRodape = await obterDuracao('rodape.mp4');
-  const ordem = [], extras = [];
 
   await baixarArquivo(input.video_principal, 'principal.mp4');
   const duracaoPrincipal = await obterDuracao('principal.mp4');
@@ -182,24 +199,35 @@ async function main() {
   await inserirRodape('parte2.mp4', 'rodape.mp4', 'parte2_final.mp4', durRodape, pontoInsercao);
   await aplicarLogo('parte2_final.mp4', 'parte2_logo.mp4');
 
+  const extras = [];
+
   for (let i = 0; i < (input.videos_extras || []).length; i++) {
     const caminhoExtra = input.videos_extras[i];
     const nome = `extra_${i}.mp4`;
+    const nomePad = `extra_pad_${i}.mp4`;
     await baixarArquivo(caminhoExtra, nome);
-    extras.push(nome);
+    await padronizarVideo(nome, nomePad);
+    extras.push(nomePad);
   }
 
   await baixarArquivo(input.video_inicial, 'inicial.mp4');
-  await baixarArquivo(input.video_miraplay, 'miraplay.mp4');
-  await baixarArquivo(input.video_final, 'final.mp4');
+  await padronizarVideo('inicial.mp4', 'inicial_pad.mp4');
 
-  ordem.push('parte1_logo.mp4');
-  ordem.push('inicial.mp4');
-  ordem.push('miraplay.mp4');
-  ordem.push(...extras);
-  ordem.push('inicial.mp4');
-  ordem.push('parte2_logo.mp4');
-  ordem.push('final.mp4');
+  await baixarArquivo(input.video_miraplay, 'miraplay.mp4');
+  await padronizarVideo('miraplay.mp4', 'miraplay_pad.mp4');
+
+  await baixarArquivo(input.video_final, 'final.mp4');
+  await padronizarVideo('final.mp4', 'final_pad.mp4');
+
+  const ordem = [
+    'parte1_logo.mp4',
+    'inicial_pad.mp4',
+    'miraplay_pad.mp4',
+    ...extras,
+    'inicial_pad.mp4',
+    'parte2_logo.mp4',
+    'final_pad.mp4'
+  ];
 
   await unirFinal(ordem, 'video_final_completo.mp4');
 
