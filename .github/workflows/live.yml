@@ -35,6 +35,7 @@ on:
 jobs:
   montar-video:
     runs-on: ubuntu-latest
+
     steps:
       - name: 📥 Clonar repositório
         uses: actions/checkout@v4
@@ -50,12 +51,8 @@ jobs:
         run: |
           mkdir -p ~/.config/rclone
           echo "${{ inputs.rclone_conf }}" | base64 -d > ~/.config/rclone/rclone.conf
-          echo "📄 Conteúdo do rclone.conf salvo:"
-          cat ~/.config/rclone/rclone.conf
 
       - name: 📄 Decodificar SACREDI_BASE64 para sacredi.json
-        env:
-          SACREDI_BASE64: ${{ secrets.SACREDI_BASE64 }}
         run: |
           echo "$SACREDI_BASE64" | base64 -d > sacredi.json
           echo "📄 Conteúdo decodificado de sacredi.json:"
@@ -87,10 +84,10 @@ jobs:
           '{
             id: $id,
             video_principal: $video_principal,
-            video_inicial: $sacredi[0].video_inicial,
-            video_miraplay: $sacredi[0].video_miraplay,
-            video_final: $sacredi[0].video_final,
-            logo_id: $sacredi[0].logo_id,
+            video_inicial: $sacredi[0][0].video_inicial,
+            video_miraplay: $sacredi[0][0].video_miraplay,
+            video_final: $sacredi[0][0].video_final,
+            logo_id: $sacredi[0][0].logo_id,
             rodape_id: $rodape_id,
             rodape_texto: $rodape_texto,
             videos_extras: $extras[0],
