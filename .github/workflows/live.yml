@@ -69,28 +69,25 @@ jobs:
 
       - name: 📝 Criar input.json com todos os dados
         run: |
-          jq -n \
-            --arg id "${{ inputs.id }}" \
+          jq -n --arg id "${{ inputs.id }}" \
             --arg video_principal "${{ inputs.video_principal }}" \
             --arg rodape_id "${{ inputs.rodape_id }}" \
             --arg rodape_texto "${{ inputs.rodape_texto }}" \
             --arg stream_url "${{ inputs.stream_url }}" \
             --slurpfile sacredi sacredi.json \
-            --slurpfile extras extras.json '
-              ($sacredi | try .[0] catch {}) as $s |
-              {
-                id: $id,
-                video_principal: $video_principal,
-                video_inicial: $s.video_inicial // "",
-                video_miraplay: $s.video_miraplay // "",
-                video_final: $s.video_final // "",
-                logo_id: $s.logo_id // "",
-                rodape_id: $rodape_id,
-                rodape_texto: $rodape_texto,
-                videos_extras: $extras[0],
-                stream_url: $stream_url
-              }
-            ' > input.json
+            --slurpfile extras extras.json \
+            '($sacredi | try .[0] catch {}) as $s | {
+              id: $id,
+              video_principal: $video_principal,
+              video_inicial: ($s.video_inicial // ""),
+              video_miraplay: ($s.video_miraplay // ""),
+              video_final: ($s.video_final // ""),
+              logo_id: ($s.logo_id // ""),
+              rodape_id: $rodape_id,
+              rodape_texto: $rodape_texto,
+              videos_extras: $extras[0],
+              stream_url: $stream_url
+            }' > input.json
 
       - name: 📂 Mostrar input.json final
         run: |
