@@ -84,28 +84,35 @@ async function baixarArquivo(remoto, destino) {
   });
 }
 
-async function adicionarLogoERodape(video, saida, rodape, logo, tempoRodape) {
-  const duracaoRodape = await obterDuracao(rodape);
+// ✅ Nova função para aplicar logo e opcionalmente rodapé
+async function aplicarLogoRodape(videoIn, output, comRodape = false) {
+  let filtros = `movie=logo.png[logo];[0:v][logo]overlay=W-w-10:10`;
 
-  const filtros = [
-    `[0:v]scale=1280:720[base]`,
-    `[1:v]scale=150:150[logo]`,
-    `[2:v]scale=iw/1.7:ih/1.7[rod]`,
-    `[base][logo]overlay=W-w-20:20[tmp1]`,
-    `[tmp1][rod]overlay=enable='between(t,${tempoRodape},${tempoRodape + duracaoRodape})':(W-w)/2:(H-h)/2`
-  ];
+  if (comRodape) {
+    filtros = `[0:v]scale=960:540[v1];movie=logo.png[logo];[v1][logo]overlay=W-w-10:10[v2];movie=rodape.mp4[rod];[v2][rod]overlay=0:H-h[out]`;
 
-  await executarFFmpeg([
-    '-i', video,
-    '-i', logo,
-    '-i', rodape,
-    '-filter_complex', filtros.join(';'),
-    '-map', '0:a?',
-    '-c:v', 'libx264',
-    '-c:a', 'aac',
-    '-preset', 'veryfast',
-    saida
-  ], saida);
+    await executarFFmpeg([
+      '-i', videoIn,
+      '-i', 'rodape.mp4',
+      '-filter_complex', filtros,
+      '-map', '[out]',
+      '-map', '0:a?',
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-c:a', 'aac',
+      output
+    ], output);
+  } else {
+    await executarFFmpeg([
+      '-i', videoIn,
+      '-i', 'logo.png',
+      '-filter_complex', filtros,
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-c:a', 'aac',
+      output
+    ], output);
+  }
 }
 
 async function unirVideos(lista, saidaFinal) {
@@ -116,7 +123,7 @@ async function unirVideos(lista, saidaFinal) {
 
 (async () => {
   const {
-    id, video_principal, rodape_id, rodape_texto,
+    id, video_principal, rodape_id,
     video_inicial, video_miraplay, video_final,
     logo_id, videos_extras, stream_url
   } = input;
@@ -131,9 +138,9 @@ async function unirVideos(lista, saidaFinal) {
   await baixarArquivo(video_miraplay, 'miraplay.mp4');
   await baixarArquivo(video_final, 'final.mp4');
 
-  console.log('🎥 Reencodificando partes com logo e rodapé...');
-  await adicionarLogoERodape('parte1.mp4', 'parte1_final.mp4', 'rodape.mp4', 'logo.png', 240);
-  await adicionarLogoERodape('parte2.mp4', 'parte2_final.mp4', 'rodape.mp4', 'logo.png', 240);
+  console.log('🎥 Aplicando logo e rodapé nas partes...');
+  await aplicarLogoRodape('parte1.mp4', 'parte1_final.mp4', true);
+  await aplicarLogoRodape('parte2.mp4', 'parte2_final.mp4', true);
 
   const extras = [];
   if (Array.isArray(videos_extras)) {
