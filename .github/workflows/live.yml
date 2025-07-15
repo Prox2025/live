@@ -77,7 +77,7 @@ jobs:
             --slurpfile sacredi sacredi.json \
             --slurpfile extras extras.json \
             '
-            ($sacredi[0] // {}) as $s |
+            ($sacredi[0][0] // {}) as $s |
             {
               id: $id,
               video_principal: $video_principal,
