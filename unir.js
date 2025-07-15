@@ -29,7 +29,7 @@ function executarFFmpeg(args, output) {
 async function baixarArquivo(caminhoRclone, destino) {
   if (!caminhoRclone) throw new Error(`❌ Caminho ausente para ${destino}`);
   return new Promise((resolve, reject) => {
-    const rclone = spawn('rclone', ['copy', `meudrive:${caminhoRclone}`, '.', '--config', keyFile]);
+    const rclone = spawn('rclone', ['copy', `meudrive:${caminhoRclone}`, '.', '--config', path.resolve(keyFile)]);
     rclone.stderr.on('data', data => process.stderr.write(data));
     rclone.on('close', code => {
       if (code === 0) {
@@ -97,6 +97,17 @@ async function aplicarLogo(input, output) {
   ], output);
 }
 
+async function gerarRodapePadrao(nome, duracao = 5) {
+  await executarFFmpeg([
+    '-f', 'lavfi',
+    '-i', 'color=black:s=1280x120',
+    '-t', duracao.toString(),
+    '-c:v', 'libx264',
+    '-pix_fmt', 'yuv420p',
+    nome
+  ], nome);
+}
+
 async function inserirRodape(video, rodape, saida, tempoRodape, pontoInsercao) {
   const antes = saida + '_antes.mp4';
   const depois = saida + '_depois.mp4';
@@ -145,25 +156,29 @@ async function main() {
     if (!input[campo]) throw new Error(`❌ Campo obrigatório ausente no input.json: ${campo}`);
   }
 
+  // Rodapé
   if (input.rodape_id) {
     await baixarArquivo(input.rodape_id, 'rodape.mp4');
   } else {
-    fs.writeFileSync('rodape.mp4', '');
+    await gerarRodapePadrao('rodape.mp4');
   }
+  const durRodape = await obterDuracao('rodape.mp4');
 
-  const durRodape = input.rodape_id ? await obterDuracao('rodape.mp4') : 5;
   const ordem = [], extras = [];
 
   await baixarArquivo(input.video_principal, 'principal.mp4');
   const duracaoPrincipal = await obterDuracao('principal.mp4');
   const metade = Math.floor(duracaoPrincipal / 2);
+  const pontoInsercao = Math.min(240, metade - durRodape);
 
+  // Parte 1
   await cortarTrecho('principal.mp4', 0, metade, 'parte1.mp4');
-  await inserirRodape('parte1.mp4', 'rodape.mp4', 'parte1_final.mp4', durRodape, 240);
+  await inserirRodape('parte1.mp4', 'rodape.mp4', 'parte1_final.mp4', durRodape, pontoInsercao);
   await aplicarLogo('parte1_final.mp4', 'parte1_logo.mp4');
 
+  // Parte 2
   await cortarTrecho('principal.mp4', metade, duracaoPrincipal - metade, 'parte2.mp4');
-  await inserirRodape('parte2.mp4', 'rodape.mp4', 'parte2_final.mp4', durRodape, 240);
+  await inserirRodape('parte2.mp4', 'rodape.mp4', 'parte2_final.mp4', durRodape, pontoInsercao);
   await aplicarLogo('parte2_final.mp4', 'parte2_logo.mp4');
 
   for (let i = 0; i < (input.videos_extras || []).length; i++) {
