@@ -61,7 +61,13 @@ async function baixarArquivo(remoto, destino) {
         if (!fs.existsSync(nome)) return reject(new Error(`Arquivo não encontrado: ${nome}`));
         fs.renameSync(nome, destino);
         registrarTemporario(destino);
-        await reencode(destino, destino);
+
+        // ✅ Evita sobrescrever o mesmo nome na reencodificação
+        const temporario = destino.replace(/\.mp4$/, '_temp.mp4');
+        await reencode(destino, temporario);
+        fs.renameSync(temporario, destino);
+
+        console.log(`📥 Baixado e reencodado: ${destino}`);
         resolve();
       } else {
         reject(new Error(`Erro ao baixar ${remoto}`));
