@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { spawn } = require('child_process');
 
-const keyFile = process.env.KEYFILE || 'rclone.conf';
-const inputFile = process.env.INPUTFILE || 'input.json';
+const keyFile = path.join(os.homedir(), '.config', 'rclone', 'rclone.conf');
+const inputFile = 'input.json';
 
 const arquivosTemporarios = [];
 
@@ -29,7 +30,7 @@ function executarFFmpeg(args, output) {
 async function baixarArquivo(caminhoRclone, destino) {
   if (!caminhoRclone) throw new Error(`❌ Caminho ausente para ${destino}`);
   return new Promise((resolve, reject) => {
-    const rclone = spawn('rclone', ['copy', `meudrive:${caminhoRclone}`, '.', '--config', path.resolve(keyFile)]);
+    const rclone = spawn('rclone', ['copy', `meudrive:${caminhoRclone}`, '.', '--config', keyFile]);
     rclone.stderr.on('data', data => process.stderr.write(data));
     rclone.on('close', code => {
       if (code === 0) {
@@ -79,6 +80,7 @@ async function cortarTrecho(input, inicio, duracao, output) {
 
 async function aplicarLogo(input, output) {
   if (!fs.existsSync('logo.png')) {
+    // Se logo.png não existe, apenas copia input para output
     fs.copyFileSync(input, output);
     return;
   }
@@ -148,77 +150,83 @@ async function unirFinal(arquivos, saida) {
 }
 
 async function main() {
-  if (!fs.existsSync(inputFile)) throw new Error(`Arquivo de entrada não encontrado: ${inputFile}`);
-  const input = JSON.parse(fs.readFileSync(inputFile));
+  try {
+    if (!fs.existsSync(inputFile)) throw new Error(`Arquivo de entrada não encontrado: ${inputFile}`);
+    const input = JSON.parse(fs.readFileSync(inputFile));
 
-  const camposObrigatorios = ['id', 'video_principal', 'video_inicial', 'video_miraplay', 'video_final', 'logo_id', 'stream_url'];
-  for (const campo of camposObrigatorios) {
-    if (!input[campo]) throw new Error(`❌ Campo obrigatório ausente no input.json: ${campo}`);
+    const camposObrigatorios = ['id', 'video_principal', 'video_inicial', 'video_miraplay', 'video_final', 'logo_id', 'stream_url'];
+    for (const campo of camposObrigatorios) {
+      if (!input[campo]) throw new Error(`❌ Campo obrigatório ausente no input.json: ${campo}`);
+    }
+
+    // Rodapé
+    if (input.rodape_id) {
+      await baixarArquivo(input.rodape_id, 'rodape.mp4');
+    } else {
+      await gerarRodapePadrao('rodape.mp4');
+    }
+    const durRodape = await obterDuracao('rodape.mp4');
+
+    const ordem = [];
+    const extras = [];
+
+    await baixarArquivo(input.video_principal, 'principal.mp4');
+    const duracaoPrincipal = await obterDuracao('principal.mp4');
+    const metade = Math.floor(duracaoPrincipal / 2);
+    const pontoInsercao = Math.min(240, metade - durRodape);
+
+    // Parte 1
+    await cortarTrecho('principal.mp4', 0, metade, 'parte1.mp4');
+    await inserirRodape('parte1.mp4', 'rodape.mp4', 'parte1_final.mp4', durRodape, pontoInsercao);
+    await aplicarLogo('parte1_final.mp4', 'parte1_logo.mp4');
+
+    // Parte 2
+    await cortarTrecho('principal.mp4', metade, duracaoPrincipal - metade, 'parte2.mp4');
+    await inserirRodape('parte2.mp4', 'rodape.mp4', 'parte2_final.mp4', durRodape, pontoInsercao);
+    await aplicarLogo('parte2_final.mp4', 'parte2_logo.mp4');
+
+    // Vídeos extras
+    for (let i = 0; i < (input.videos_extras || []).length; i++) {
+      const caminhoExtra = input.videos_extras[i];
+      const nome = `extra_${i}.mp4`;
+      await baixarArquivo(caminhoExtra, nome);
+      extras.push(nome);
+    }
+
+    // Baixar vídeos iniciais e finais
+    await baixarArquivo(input.video_inicial, 'inicial.mp4');
+    await baixarArquivo(input.video_miraplay, 'miraplay.mp4');
+    await baixarArquivo(input.video_final, 'final.mp4');
+
+    // Ordem de concatenação
+    ordem.push('parte1_logo.mp4');
+    ordem.push('inicial.mp4');
+    ordem.push('miraplay.mp4');
+    ordem.push(...extras);
+    ordem.push('inicial.mp4');
+    ordem.push('parte2_logo.mp4');
+    ordem.push('final.mp4');
+
+    await unirFinal(ordem, 'video_final_completo.mp4');
+
+    const stats = fs.statSync('video_final_completo.mp4');
+    const duracao = await obterDuracao('video_final_completo.mp4');
+    const tamanho = (stats.size / 1024 / 1024).toFixed(2);
+
+    fs.writeFileSync('stream_info.json', JSON.stringify({
+      id: input.id,
+      stream_url: input.stream_url,
+      duracao,
+      tamanho_mb: tamanho
+    }, null, 2));
+
+    console.log(`✅ Vídeo final pronto: video_final_completo.mp4`);
+    console.log(`⏱️  Duração: ${duracao.toFixed(2)} segundos`);
+    console.log(`💾 Tamanho: ${tamanho} MB`);
+  } catch (err) {
+    console.error('❌ Erro no processamento:', err.message || err);
+    process.exit(1);
   }
-
-  // Rodapé
-  if (input.rodape_id) {
-    await baixarArquivo(input.rodape_id, 'rodape.mp4');
-  } else {
-    await gerarRodapePadrao('rodape.mp4');
-  }
-  const durRodape = await obterDuracao('rodape.mp4');
-
-  const ordem = [], extras = [];
-
-  await baixarArquivo(input.video_principal, 'principal.mp4');
-  const duracaoPrincipal = await obterDuracao('principal.mp4');
-  const metade = Math.floor(duracaoPrincipal / 2);
-  const pontoInsercao = Math.min(240, metade - durRodape);
-
-  // Parte 1
-  await cortarTrecho('principal.mp4', 0, metade, 'parte1.mp4');
-  await inserirRodape('parte1.mp4', 'rodape.mp4', 'parte1_final.mp4', durRodape, pontoInsercao);
-  await aplicarLogo('parte1_final.mp4', 'parte1_logo.mp4');
-
-  // Parte 2
-  await cortarTrecho('principal.mp4', metade, duracaoPrincipal - metade, 'parte2.mp4');
-  await inserirRodape('parte2.mp4', 'rodape.mp4', 'parte2_final.mp4', durRodape, pontoInsercao);
-  await aplicarLogo('parte2_final.mp4', 'parte2_logo.mp4');
-
-  for (let i = 0; i < (input.videos_extras || []).length; i++) {
-    const caminhoExtra = input.videos_extras[i];
-    const nome = `extra_${i}.mp4`;
-    await baixarArquivo(caminhoExtra, nome);
-    extras.push(nome);
-  }
-
-  await baixarArquivo(input.video_inicial, 'inicial.mp4');
-  await baixarArquivo(input.video_miraplay, 'miraplay.mp4');
-  await baixarArquivo(input.video_final, 'final.mp4');
-
-  ordem.push('parte1_logo.mp4');
-  ordem.push('inicial.mp4');
-  ordem.push('miraplay.mp4');
-  ordem.push(...extras);
-  ordem.push('inicial.mp4');
-  ordem.push('parte2_logo.mp4');
-  ordem.push('final.mp4');
-
-  await unirFinal(ordem, 'video_final_completo.mp4');
-
-  const stats = fs.statSync('video_final_completo.mp4');
-  const duracao = await obterDuracao('video_final_completo.mp4');
-  const tamanho = (stats.size / 1024 / 1024).toFixed(2);
-
-  fs.writeFileSync('stream_info.json', JSON.stringify({
-    id: input.id,
-    stream_url: input.stream_url,
-    duracao,
-    tamanho_mb: tamanho
-  }, null, 2));
-
-  console.log(`✅ Vídeo final pronto: video_final_completo.mp4`);
-  console.log(`⏱️  Duração: ${duracao.toFixed(2)} segundos`);
-  console.log(`💾 Tamanho: ${tamanho} MB`);
 }
 
-main().catch(err => {
-  console.error('❌ Erro no processamento:', err.message || err);
-  process.exit(1);
-});
+main();
