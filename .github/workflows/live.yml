@@ -9,32 +9,32 @@ on:
         type: string
 
       video_principal:
-        description: 'Caminho do vídeo principal (ex: videos/abc123.mp4)'
+        description: 'Caminho do vídeo principal no Drive (ex: videos/abc.mp4)'
         required: true
         type: string
 
       rodape_id:
-        description: 'Caminho do arquivo rodapé (.webm/mp4)'
+        description: 'Caminho do rodapé (opcional)'
         required: false
         type: string
 
       rodape_texto:
-        description: 'Texto exibido ao lado do rodapé'
+        description: 'Texto ao lado do rodapé'
         required: false
         type: string
 
       videos_extras:
-        description: 'Caminhos dos vídeos extras, separados por vírgula (máx. 5)'
+        description: 'Caminhos extras separados por vírgula'
         required: false
         type: string
 
       stream_url:
-        description: 'URL RTMP para envio do vídeo final'
+        description: 'URL do RTMP (opcional)'
         required: false
         type: string
 
       rclone_conf:
-        description: 'Conteúdo do rclone.conf em base64'
+        description: 'rclone.conf codificado em base64'
         required: true
         type: string
 
@@ -53,30 +53,33 @@ jobs:
           echo '{}' > package.json
           npm install puppeteer
 
-      - name: 🔐 Criar rclone.conf (a partir do base64)
+      - name: 📄 Salvar rclone.conf (decodificado)
         run: |
           mkdir -p ~/.config/rclone
           echo "${{ inputs.rclone_conf }}" | base64 -d > ~/.config/rclone/rclone.conf
 
-      - name: 🧾 Criar sacredi.json a partir do segredo
-        run: |
-          echo '${{ secrets.SACREDI_JSON }}' > sacredi.json
+      - name: 📄 Criar sacredi.json a partir do segredo
+        run: echo '${{ secrets.SACREDI_JSON }}' > sacredi.json
 
-      - name: 📥 Baixar rodapé (se fornecido)
-        if: ${{ inputs.rodape_id != '' && inputs.rodape_id != null }}
+      - name: 🔍 Mostrar sacredi.json no log
         run: |
-          mkdir -p artefatos
-          rclone copy meudrive:${{ inputs.rodape_id }} artefatos/
+          echo "Conteúdo de sacredi.json:"
+          cat sacredi.json
+          echo "--- FIM ---"
 
-      - name: 📄 Criar input.json com todos os dados corretamente
+      - name: 🧾 Processar vídeos extras (array JSON)
+        id: extras
         run: |
           if [ -z "${{ inputs.videos_extras }}" ]; then
-            VIDEOS_EXTRAS_JSON='[]'
+            echo "VIDEOS_EXTRAS_JSON=[]" >> "$GITHUB_ENV"
           else
-            IFS=',' read -ra EXTRAS_ARRAY <<< "${{ inputs.videos_extras }}"
-            VIDEOS_EXTRAS_JSON=$(printf '%s\n' "${EXTRAS_ARRAY[@]}" | jq -R . | jq -s .)
+            IFS=',' read -ra EXTRAS <<< "${{ inputs.videos_extras }}"
+            JSON=$(printf '%s\n' "${EXTRAS[@]}" | jq -R . | jq -s .)
+            echo "VIDEOS_EXTRAS_JSON=$JSON" >> "$GITHUB_ENV"
           fi
 
+      - name: 📝 Gerar input.json para o Node.js
+        run: |
           jq -n \
             --arg id "${{ inputs.id }}" \
             --arg video_principal "${{ inputs.video_principal }}" \
@@ -98,17 +101,20 @@ jobs:
             stream_url: $stream_url
           }' > input.json
 
-      - name: 🧠 Executar script de montagem
+      - name: 📂 Mostrar input.json no log
+        run: cat input.json
+
+      - name: 🧠 Executar script de montagem Node.js
         run: node unir.js
 
-      - name: 📤 Salvar artefatos (vídeo final e dados)
+      - name: 📤 Salvar artefatos finais
         uses: actions/upload-artifact@v4
         with:
           name: video_final
           path: |
             video_final_completo.mp4
             stream_info.json
-            artefatos/
+            rodape.mp4
 
   transmitir-video:
     runs-on: ubuntu-latest
@@ -118,23 +124,23 @@ jobs:
       - name: 📥 Clonar repositório
         uses: actions/checkout@v4
 
-      - name: 📦 Instalar dependências para transmissão
+      - name: 📦 Instalar dependências
         run: |
           sudo apt update
           sudo apt install -y ffmpeg
           echo '{}' > package.json
           npm install puppeteer
 
-      - name: 📄 Baixar artifact com vídeo e metadados
+      - name: 📂 Baixar artefatos
         uses: actions/download-artifact@v4
         with:
           name: video_final
           path: video_final
 
-      - name: 📂 Copiar arquivos para diretório atual
+      - name: 🧾 Copiar para diretório atual
         run: cp -r video_final/* .
 
-      - name: ▶️ Transmitir vídeo final (.mp4)
+      - name: ▶️ Transmitir vídeo final (Node)
         env:
           SERVER_STATUS_URL: ${{ secrets.SERVER_STATUS_URL }}
         run: node transmitir.js
