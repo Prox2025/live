@@ -46,12 +46,6 @@ jobs:
       - name: 📥 Clonar repositório
         uses: actions/checkout@v4
 
-      - name: 📄 Criar arquivo sacredi.json a partir do segredo
-        env:
-          SACREDI_JSON: ${{ secrets.SACREDI_JSON }}
-        run: |
-          echo "$SACREDI_JSON" > sacredi.json
-
       - name: 📦 Instalar dependências
         run: |
           sudo apt update
