@@ -6,13 +6,14 @@ const videoFile = 'video_final_completo.mp4';
 const infoFile = 'stream_info.json';
 const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL || '';
 
+/**
+ * Envia status ao servidor (via Puppeteer para renderizar JS da página).
+ */
 async function enviarStatusViaPuppeteer(payload) {
-  if (!SERVER_STATUS_URL) {
-    console.warn('⚠️ SERVER_STATUS_URL não definido, status não enviado.');
-    return;
-  }
+  if (!SERVER_STATUS_URL) return;
 
-  console.log('📡 Abrindo navegador para envio de status...');
+  console.log('📡 Enviando status ao servidor...', payload);
+
   try {
     const browser = await puppeteer.launch({
       headless: true,
@@ -29,18 +30,10 @@ async function enviarStatusViaPuppeteer(payload) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-
         const text = await res.text();
-        return {
-          ok: res.ok,
-          status: res.status,
-          text: text
-        };
+        return { ok: res.ok, status: res.status, response: text };
       } catch (e) {
-        return {
-          ok: false,
-          error: e.message
-        };
+        return { ok: false, error: e.message };
       }
     }, payload);
 
@@ -48,17 +41,17 @@ async function enviarStatusViaPuppeteer(payload) {
 
     if (result.ok) {
       console.log(`✅ Status enviado com sucesso: ${payload.status}`);
-      if (result.text) {
-        console.log(`📥 Resposta do servidor: ${result.text}`);
-      }
     } else {
-      console.error(`❌ Erro ao enviar status. HTTP ${result.status || 'N/A'}: ${result.text || result.error}`);
+      console.warn(`⚠️ Falha no envio (HTTP ${result.status || 'N/A'}): ${result.error || result.response}`);
     }
   } catch (err) {
-    console.error('❌ Erro ao usar Puppeteer:', err.message);
+    console.warn('⚠️ Erro ao usar puppeteer:', err.message);
   }
 }
 
+/**
+ * Transmite o vídeo via FFmpeg para o RTMP.
+ */
 async function transmitir() {
   if (!fs.existsSync(infoFile)) {
     console.error('❌ Arquivo stream_info.json não encontrado!');
@@ -67,7 +60,7 @@ async function transmitir() {
 
   const info = JSON.parse(fs.readFileSync(infoFile, 'utf8'));
   const streamUrl = info.stream_url;
-  const id = info.id || 'desconhecido';
+  const id = info.id || 'sem_id';
 
   if (!streamUrl) {
     console.error('❌ stream_url não definida!');
@@ -82,12 +75,24 @@ async function transmitir() {
   }
 
   console.log('▶️ Iniciando transmissão...');
+  await enviarStatusViaPuppeteer({ id, status: 'started' });
+
+  // Enviar status após 60 segundos de transmissão (seguro para Facebook)
+  setTimeout(() => {
+    enviarStatusViaPuppeteer({ id, status: 'streaming' });
+  }, 60000);
+
   const ffmpeg = spawn('ffmpeg', [
     '-re',
     '-i', videoFile,
     '-c:v', 'libx264',
+    '-profile:v', 'baseline',
     '-preset', 'veryfast',
     '-pix_fmt', 'yuv420p',
+    '-b:v', '2500k',
+    '-maxrate', '2500k',
+    '-bufsize', '5000k',
+    '-g', '60', // GOP (2 segundos para 30fps)
     '-c:a', 'aac',
     '-b:a', '128k',
     '-ar', '44100',
@@ -95,15 +100,17 @@ async function transmitir() {
     streamUrl
   ], { stdio: 'inherit' });
 
-  // Esperar 60s antes de enviar o status "started"
-  setTimeout(() => {
-    enviarStatusViaPuppeteer({ id, status: 'started' });
-  }, 60000);
-
   ffmpeg.on('close', async (code) => {
     if (code === 0) {
       console.log('✅ Transmissão concluída com sucesso.');
       await enviarStatusViaPuppeteer({ id, status: 'finished' });
+    } else if (code === 251) {
+      console.error('❌ Facebook cortou a transmissão (erro TLS / sessão encerrada).');
+      await enviarStatusViaPuppeteer({
+        id,
+        status: 'interrupted',
+        message: 'Facebook encerrou a live (RTMPS desconectado ou sessão finalizada).'
+      });
     } else {
       console.error(`🚨 Erro na transmissão (código ${code})`);
       await enviarStatusViaPuppeteer({
@@ -115,6 +122,7 @@ async function transmitir() {
   });
 }
 
+// Executa com tratamento de erro fatal
 transmitir().catch(async (err) => {
   console.error('🚨 Erro fatal:', err.message);
   await enviarStatusViaPuppeteer({ id: 'desconhecido', status: 'error', message: err.message });
