@@ -151,9 +151,19 @@ async function unirComRodape(listaDeVideos, saidaFinal) {
 
 // Função principal para processar vídeos
 async function processarVideos() {
+  // Garantir que a parte 1 e parte 2 sejam criadas corretamente
+  const parte1 = 'parte1.mp4';
+  const parte2 = 'parte2.mp4';
+
+  // Verifique se os arquivos de entrada existem antes de prosseguir
+  if (!fs.existsSync(parte1) || !fs.existsSync(parte2)) {
+    console.log(`Arquivo não encontrado: parte1.mp4 ou parte2.mp4`);
+    return;
+  }
+
   const videosParaProcessar = [
-    'parte1.mp4', 
-    'parte2.mp4', 
+    parte1, 
+    parte2, 
     'inicial.mp4', 
     'miraplay.mp4', 
     ...input.videos_extras, 
@@ -165,8 +175,8 @@ async function processarVideos() {
 
   console.log('🎥 Aplicando rodapé e logo às partes principais...');
   // Aplica o rodapé e logo somente nas partes do vídeo principal (parte1 e parte2)
-  await aplicarRodapeELogoPartePrincipal('parte1.mp4', 'rodape.mp4', 'logo.png', 'parte1_completo.mp4');
-  await aplicarRodapeELogoPartePrincipal('parte2.mp4', 'rodape.mp4', 'logo.png', 'parte2_completo.mp4');
+  await aplicarRodapeELogoPartePrincipal(parte1, 'rodape.mp4', 'logo.png', 'parte1_completo.mp4');
+  await aplicarRodapeELogoPartePrincipal(parte2, 'rodape.mp4', 'logo.png', 'parte2_completo.mp4');
 
   // Para os outros vídeos (não principais), apenas normalizamos
   for (let video of ['inicial.mp4', 'miraplay.mp4', ...input.videos_extras, 'final.mp4']) {
