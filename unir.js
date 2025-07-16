@@ -177,16 +177,16 @@ async function processarVideos() {
 }
 
 (async () => {
-  const { video_principal, rodape_id, logo_id, stream_url } = input;
+  const { video_principal, rodape_id, logo_id, stream_url, video_inicial, video_miraplay, video_final } = input;
 
   console.log('⏬ Baixando todos os vídeos...');
   await baixarArquivo(video_principal, 'principal.mp4');
   await dividirVideo('principal.mp4', 'parte1.mp4', 'parte2.mp4');
   await baixarArquivo(rodape_id, 'rodape.mp4');
   await baixarArquivo(logo_id, 'logo.png');
-  await baixarArquivo(input.inicial, 'inicial.mp4');
-  await baixarArquivo(input.miraplay, 'miraplay.mp4');
-  await baixarArquivo(input.final, 'final.mp4');
+  await baixarArquivo(video_inicial, 'inicial.mp4');
+  await baixarArquivo(video_miraplay, 'miraplay.mp4');
+  await baixarArquivo(video_final, 'final.mp4');
 
   for (let i = 0; i < input.videos_extras.length; i++) {
     const extra = input.videos_extras[i];
