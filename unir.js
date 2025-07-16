@@ -141,14 +141,15 @@ async function processarVideos() {
   const parte1 = 'parte1.mp4';
   const parte2 = 'parte2.mp4';
 
-  const videosExtrasNormalizados = input.videos_extras.map((_, i) => `extra_${i}_normalizado.mp4`);
+  const videosExtras = input.videos_extras.map((_, i) => `extra_${i}.mp4`);
+  const videosExtrasNormalizados = videosExtras.map(v => v.replace('.mp4', '_normalizado.mp4'));
 
   const videosParaProcessar = [
     parte1,
     parte2,
     'inicial.mp4',
     'miraplay.mp4',
-    ...input.videos_extras.map((_, i) => `extra_${i}.mp4`),
+    ...videosExtras,
     'final.mp4'
   ];
 
@@ -183,9 +184,9 @@ async function processarVideos() {
   await dividirVideo('principal.mp4', 'parte1.mp4', 'parte2.mp4');
   await baixarArquivo(rodape_id, 'rodape.mp4');
   await baixarArquivo(logo_id, 'logo.png');
-  await baixarArquivo('inicial.mp4', 'inicial.mp4');
-  await baixarArquivo('miraplay.mp4', 'miraplay.mp4');
-  await baixarArquivo('final.mp4', 'final.mp4');
+  await baixarArquivo(input.inicial, 'inicial.mp4');
+  await baixarArquivo(input.miraplay, 'miraplay.mp4');
+  await baixarArquivo(input.final, 'final.mp4');
 
   for (let i = 0; i < input.videos_extras.length; i++) {
     const extra = input.videos_extras[i];
