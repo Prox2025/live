@@ -14,12 +14,15 @@ async function enviarStatus(payload) {
   try {
     const browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'], // <- 👈 necessário para ambientes restritos
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
 
     const page = await browser.newPage();
 
-    await page.goto(SERVER_STATUS_URL, { waitUntil: 'networkidle2', timeout: 15000 });
+    await page.goto(SERVER_STATUS_URL, {
+      waitUntil: 'networkidle2',
+      timeout: 15000
+    });
 
     const result = await page.evaluate(async (payload) => {
       try {
@@ -39,11 +42,10 @@ async function enviarStatus(payload) {
     if (result.ok) {
       console.log('✅ Status enviado com sucesso:', payload.status);
     } else {
-      console.warn(`⚠️ Falha no envio (HTTP ${result.status || 'N/A'}): ${result.error || 'desconhecido'}`);
+      console.warn(`⚠️ Falha ao enviar (HTTP ${result.status || 'N/A'}): ${result.error || 'desconhecido'}`);
     }
-
   } catch (err) {
-    console.warn('⚠️ Erro ao enviar status (puppeteer):', err.message);
+    console.warn('⚠️ Erro ao enviar status via Puppeteer:', err.message);
   }
 }
 
@@ -58,7 +60,7 @@ async function transmitir() {
   const id = info.id || 'sem_id';
 
   if (!streamUrl) {
-    console.error('❌ stream_url não definida!');
+    console.error('❌ stream_url ausente no arquivo!');
     await enviarStatus({ id, status: 'error', message: 'URL de transmissão ausente' });
     process.exit(1);
   }
@@ -70,25 +72,38 @@ async function transmitir() {
   }
 
   console.log('▶️ Iniciando transmissão...');
-  await enviarStatus({ id, status: 'started' });
+
+  // Envia o status apenas após 60 segundos
+  const envioStatusAgendado = setTimeout(async () => {
+    await enviarStatus({ id, status: 'started', message: 'Transmissão iniciada' });
+  }, 60000);
 
   const ffmpeg = spawn('ffmpeg', [
     '-re',
     '-i', videoFile,
     '-c:v', 'libx264',
     '-preset', 'veryfast',
+    '-profile:v', 'baseline',
     '-pix_fmt', 'yuv420p',
+    '-r', '30',
+    '-g', '60',
+    '-b:v', '2500k',
+    '-maxrate', '2500k',
+    '-bufsize', '5000k',
     '-c:a', 'aac',
     '-b:a', '128k',
     '-ar', '44100',
+    '-ac', '2',
     '-f', 'flv',
     streamUrl
   ], { stdio: 'inherit' });
 
   ffmpeg.on('close', async (code) => {
+    clearTimeout(envioStatusAgendado); // Cancela envio agendado se encerrar antes
+
     if (code === 0) {
       console.log('✅ Transmissão concluída com sucesso.');
-      await enviarStatus({ id, status: 'finished' });
+      await enviarStatus({ id, status: 'finished', message: 'Live finalizada' });
     } else {
       console.error(`🚨 Erro na transmissão (código ${code})`);
       await enviarStatus({ id, status: 'error', message: `FFmpeg falhou com código ${code}` });
