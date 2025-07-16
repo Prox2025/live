@@ -141,17 +141,14 @@ async function processarVideos() {
   const parte1 = 'parte1.mp4';
   const parte2 = 'parte2.mp4';
 
-  if (!fs.existsSync(parte1) || !fs.existsSync(parte2)) {
-    console.log(`❌ Arquivo não encontrado: parte1.mp4 ou parte2.mp4`);
-    return;
-  }
+  const videosExtrasNormalizados = input.videos_extras.map((_, i) => `extra_${i}_normalizado.mp4`);
 
   const videosParaProcessar = [
     parte1,
     parte2,
     'inicial.mp4',
     'miraplay.mp4',
-    ...input.videos_extras,
+    ...input.videos_extras.map((_, i) => `extra_${i}.mp4`),
     'final.mp4'
   ];
 
@@ -162,15 +159,11 @@ async function processarVideos() {
   await aplicarRodapeELogoPartePrincipal(parte1, 'rodape.mp4', 'logo.png', 'parte1_completo.mp4');
   await aplicarRodapeELogoPartePrincipal(parte2, 'rodape.mp4', 'logo.png', 'parte2_completo.mp4');
 
-  for (let video of ['inicial.mp4', 'miraplay.mp4', ...input.videos_extras, 'final.mp4']) {
-    await normalizarVideo(video, video.replace('.mp4', '_normalizado.mp4'));
-  }
-
   const ordemFinal = [
     'parte1_completo.mp4',
     'inicial_normalizado.mp4',
     'miraplay_normalizado.mp4',
-    ...input.videos_extras.map((_, i) => `extra_${i}_normalizado.mp4`),
+    ...videosExtrasNormalizados,
     'inicial_normalizado.mp4',
     'parte2_completo.mp4',
     'final_normalizado.mp4'
@@ -185,11 +178,19 @@ async function processarVideos() {
 (async () => {
   const { video_principal, rodape_id, logo_id, stream_url } = input;
 
-  console.log('⏬ Baixando vídeos...');
+  console.log('⏬ Baixando todos os vídeos...');
   await baixarArquivo(video_principal, 'principal.mp4');
   await dividirVideo('principal.mp4', 'parte1.mp4', 'parte2.mp4');
   await baixarArquivo(rodape_id, 'rodape.mp4');
   await baixarArquivo(logo_id, 'logo.png');
+  await baixarArquivo('inicial.mp4', 'inicial.mp4');
+  await baixarArquivo('miraplay.mp4', 'miraplay.mp4');
+  await baixarArquivo('final.mp4', 'final.mp4');
+
+  for (let i = 0; i < input.videos_extras.length; i++) {
+    const extra = input.videos_extras[i];
+    await baixarArquivo(extra, `extra_${i}.mp4`);
+  }
 
   console.log('🎬 Iniciando processamento...');
   await processarVideos();
