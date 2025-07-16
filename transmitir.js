@@ -6,23 +6,21 @@ const videoFile = 'video_final_completo.mp4';
 const infoFile = 'stream_info.json';
 const SERVER_STATUS_URL = process.env.SERVER_STATUS_URL || '';
 
-async function enviarStatus(payload) {
-  if (!SERVER_STATUS_URL) return;
+async function enviarStatusViaPuppeteer(payload) {
+  if (!SERVER_STATUS_URL) {
+    console.warn('⚠️ SERVER_STATUS_URL não definido, status não enviado.');
+    return;
+  }
 
-  console.log('📡 Enviando status ao servidor...', payload);
-
+  console.log('📡 Abrindo navegador para envio de status...');
   try {
     const browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
 
     const page = await browser.newPage();
-
-    await page.goto(SERVER_STATUS_URL, {
-      waitUntil: 'networkidle2',
-      timeout: 15000
-    });
+    await page.goto(SERVER_STATUS_URL, { waitUntil: 'networkidle2', timeout: 20000 });
 
     const result = await page.evaluate(async (payload) => {
       try {
@@ -31,21 +29,33 @@ async function enviarStatus(payload) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        return { ok: res.ok, status: res.status };
+
+        const text = await res.text();
+        return {
+          ok: res.ok,
+          status: res.status,
+          text: text
+        };
       } catch (e) {
-        return { ok: false, error: e.message };
+        return {
+          ok: false,
+          error: e.message
+        };
       }
     }, payload);
 
     await browser.close();
 
     if (result.ok) {
-      console.log('✅ Status enviado com sucesso:', payload.status);
+      console.log(`✅ Status enviado com sucesso: ${payload.status}`);
+      if (result.text) {
+        console.log(`📥 Resposta do servidor: ${result.text}`);
+      }
     } else {
-      console.warn(`⚠️ Falha ao enviar (HTTP ${result.status || 'N/A'}): ${result.error || 'desconhecido'}`);
+      console.error(`❌ Erro ao enviar status. HTTP ${result.status || 'N/A'}: ${result.text || result.error}`);
     }
   } catch (err) {
-    console.warn('⚠️ Erro ao enviar status via Puppeteer:', err.message);
+    console.error('❌ Erro ao usar Puppeteer:', err.message);
   }
 }
 
@@ -57,63 +67,56 @@ async function transmitir() {
 
   const info = JSON.parse(fs.readFileSync(infoFile, 'utf8'));
   const streamUrl = info.stream_url;
-  const id = info.id || 'sem_id';
+  const id = info.id || 'desconhecido';
 
   if (!streamUrl) {
-    console.error('❌ stream_url ausente no arquivo!');
-    await enviarStatus({ id, status: 'error', message: 'URL de transmissão ausente' });
+    console.error('❌ stream_url não definida!');
+    await enviarStatusViaPuppeteer({ id, status: 'error', message: 'URL de transmissão ausente' });
     process.exit(1);
   }
 
   if (!fs.existsSync(videoFile)) {
     console.error(`❌ Vídeo "${videoFile}" não encontrado!`);
-    await enviarStatus({ id, status: 'error', message: 'Arquivo de vídeo não encontrado' });
+    await enviarStatusViaPuppeteer({ id, status: 'error', message: 'Arquivo de vídeo não encontrado' });
     process.exit(1);
   }
 
   console.log('▶️ Iniciando transmissão...');
-
-  // Envia o status apenas após 60 segundos
-  const envioStatusAgendado = setTimeout(async () => {
-    await enviarStatus({ id, status: 'started', message: 'Transmissão iniciada' });
-  }, 60000);
-
   const ffmpeg = spawn('ffmpeg', [
     '-re',
     '-i', videoFile,
     '-c:v', 'libx264',
     '-preset', 'veryfast',
-    '-profile:v', 'baseline',
     '-pix_fmt', 'yuv420p',
-    '-r', '30',
-    '-g', '60',
-    '-b:v', '2500k',
-    '-maxrate', '2500k',
-    '-bufsize', '5000k',
     '-c:a', 'aac',
     '-b:a', '128k',
     '-ar', '44100',
-    '-ac', '2',
     '-f', 'flv',
     streamUrl
   ], { stdio: 'inherit' });
 
-  ffmpeg.on('close', async (code) => {
-    clearTimeout(envioStatusAgendado); // Cancela envio agendado se encerrar antes
+  // Esperar 60s antes de enviar o status "started"
+  setTimeout(() => {
+    enviarStatusViaPuppeteer({ id, status: 'started' });
+  }, 60000);
 
+  ffmpeg.on('close', async (code) => {
     if (code === 0) {
       console.log('✅ Transmissão concluída com sucesso.');
-      await enviarStatus({ id, status: 'finished', message: 'Live finalizada' });
+      await enviarStatusViaPuppeteer({ id, status: 'finished' });
     } else {
       console.error(`🚨 Erro na transmissão (código ${code})`);
-      await enviarStatus({ id, status: 'error', message: `FFmpeg falhou com código ${code}` });
+      await enviarStatusViaPuppeteer({
+        id,
+        status: 'error',
+        message: `FFmpeg falhou com código ${code}`
+      });
     }
   });
 }
 
 transmitir().catch(async (err) => {
-  console.error('🚨 Erro fatal:', err);
-  const id = 'desconhecido';
-  await enviarStatus({ id, status: 'error', message: err.message });
+  console.error('🚨 Erro fatal:', err.message);
+  await enviarStatusViaPuppeteer({ id: 'desconhecido', status: 'error', message: err.message });
   process.exit(1);
 });
