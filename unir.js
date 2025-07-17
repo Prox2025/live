@@ -99,6 +99,28 @@ async function aplicarRodapeELogoPartePrincipal(videoEntrada, rodape, logo, said
   ], saidaFinal);
 }
 
+async function aplicarRodapeComoFundo(parte2, rodape, saida) {
+  const filtro = `
+    [0:v]scale=320:-1[mini];
+    [1:v]scale=1280:720[bg];
+    [bg][mini]overlay=W-w-51:H-h-65[outv]
+  `.replace(/\s+/g, '');
+
+  await executarFFmpeg([
+    '-i', parte2,
+    '-i', rodape,
+    '-filter_complex', filtro,
+    '-map', '[outv]',
+    '-map', '0:a?',
+    '-c:v', 'libx264',
+    '-preset', 'ultrafast',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-shortest',
+    saida
+  ], saida);
+}
+
 async function normalizarVideo(entrada, saida) {
   if (!fs.existsSync(entrada)) {
     throw new Error(`❌ Arquivo não encontrado: ${entrada}`);
@@ -125,8 +147,6 @@ async function unirComRodape(listaVideos, saidaFinal) {
   }
 
   const filtros = listaVideos.map((_, i) => `[${i}:v:0][${i}:a:0]`).join('');
-  const maps = '-map "[v]" -map "[a]"';
-
   const filtroFinal = `
     ${filtros}concat=n=${listaVideos.length}:v=1:a=1[v][a]
   `.replace(/\s+/g, '');
@@ -157,7 +177,7 @@ async function processarVideos() {
   await normalizarVideo(parte2, 'parte2_normalizado.mp4');
 
   await aplicarRodapeELogoPartePrincipal('parte1_normalizado.mp4', 'rodape.mp4', 'logo.png', 'parte1_completo.mp4');
-  await aplicarRodapeELogoPartePrincipal('parte2_normalizado.mp4', 'rodape.mp4', 'logo.png', 'parte2_completo.mp4');
+  await aplicarRodapeComoFundo('parte2_normalizado.mp4', 'rodape.mp4', 'parte2_completo.mp4');
 
   const extras = input.videos_extras || [];
   for (let i = 0; i < extras.length; i++) {
